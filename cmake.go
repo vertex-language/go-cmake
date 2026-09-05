@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/vertex-language/go-cmake/build"
 	"github.com/vertex-language/go-cmake/eval"
@@ -20,12 +19,16 @@ import (
 	"github.com/vertex-language/go-cmake/toolchain"
 )
 
+// Flags holds the command-line switches that change what this package does.
+//
+// It is short because most of CMake's switches change only diagnostics, and a
+// field that is never read is a promise the package does not keep: a caller
+// setting it would get silence. The ones the command line accepts and ignores
+// are listed in cli, not here.
 type Flags struct {
-	Fresh             bool
-	WarnUninitialized bool
-	LogLevel          string
-	DryRun            bool
-	Trace             bool
+	// LogLevel selects the message() modes that reach Out. "VERBOSE" also
+	// makes the build print each command it runs.
+	LogLevel string
 }
 
 type Config struct {
@@ -43,19 +46,14 @@ type Config struct {
 	Runner run.Runner
 	Out    io.Writer
 	Err    io.Writer
-
-	OnUndefined  func(name string)
-	OnDeprecated func(policy, msg string)
 }
 
 type FS interface {
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm fs.FileMode) error
 	MkdirAll(name string, perm fs.FileMode) error
-	ModTime(name string) (time.Time, error)
 	Glob(pattern string) ([]string, error)
 	Remove(name string) error
-	Symlink(old, new string) error
 	Stat(name string) (fs.FileInfo, error)
 }
 

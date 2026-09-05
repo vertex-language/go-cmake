@@ -204,7 +204,7 @@ type Config struct {
     Vars      map[string]string // -D assignments
     Env       []string          // defaults to os.Environ()
     Jobs      int               // --parallel
-    Flags     Flags             // --fresh --warn-uninitialized --log-level ...
+    Flags     Flags             // --log-level
 
     FS     FS
     Runner run.Runner
@@ -298,16 +298,21 @@ func Main(ctx context.Context, e Env) int
 
 | Mode | |
 |---|---|
-| configure | `-S` `-B` `-G` `-D` `-U` `--preset` `--toolchain` `--fresh` `--log-level` `-j` |
+| configure | `-S` `-B` `-G` `-D` `-U` `--preset` `--toolchain` `--log-level` `-j` |
 | build | `cmake --build <dir> [--target ...] [--config ...] [-j N] [--clean-first] [--verbose]` |
 | install | `cmake --install` — reports that it is not implemented (see below) |
 | script | `cmake -P <script.cmake> [args...]` — the language with no project and no cache |
 | tool | `cmake -E <command>` — the portable shell that generated build rules call |
 
-Flags that change only diagnostics (`--trace`, `-Wdev`, `--debug-find`, and
-friends) are accepted and ignored. An unrecognised flag is an error rather than
-a silent no-op, because a misspelled flag that is quietly discarded produces a
-build that is subtly not the one asked for.
+Flags that change only diagnostics (`--trace`, `-Wdev`, `--warn-uninitialized`,
+`--debug-find`, and friends) are accepted and ignored. So is `--fresh`, and in
+its case that is correct rather than merely convenient: this package writes no
+`CMakeCache.txt`, so nothing survives a run for `--fresh` to discard — every
+configure already starts from nothing.
+
+An unrecognised flag is an error rather than a silent no-op, because a
+misspelled flag that is quietly discarded produces a build that is subtly not
+the one asked for.
 
 ---
 

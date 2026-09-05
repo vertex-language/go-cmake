@@ -162,10 +162,12 @@ func parseConfigure(e Env) (*configureOptions, error) {
 				o.jobs, err = strconv.Atoi(v)
 			}
 		case arg == "--fresh":
-			o.flags.Fresh = true
-		case arg == "--warn-uninitialized":
-			o.flags.WarnUninitialized = true
-		case arg == "-N", arg == "--trace", arg == "--trace-expand", arg == "--debug-output",
+			// Accepted and ignored, and correct rather than merely convenient:
+			// this package writes no CMakeCache.txt, so no state survives a run
+			// for --fresh to discard. Every configure already starts from
+			// nothing.
+		case arg == "-N", arg == "--warn-uninitialized", arg == "--trace",
+			arg == "--trace-expand", arg == "--debug-output",
 			arg == "-Wdev", arg == "-Wno-dev", arg == "-Werror=dev", arg == "-Wno-error=dev",
 			arg == "--no-warn-unused-cli", arg == "--check-system-vars", arg == "--debug-find":
 			// Accepted and ignored: these change diagnostics, not results.

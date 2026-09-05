@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 type realFS struct {
@@ -34,24 +33,12 @@ func (r *realFS) MkdirAll(name string, perm fs.FileMode) error {
 	return os.MkdirAll(r.path(name), perm)
 }
 
-func (r *realFS) ModTime(name string) (time.Time, error) {
-	info, err := os.Stat(r.path(name))
-	if err != nil {
-		return time.Time{}, err
-	}
-	return info.ModTime(), nil
-}
-
 func (r *realFS) Glob(pattern string) ([]string, error) {
 	return filepath.Glob(r.path(pattern))
 }
 
 func (r *realFS) Remove(name string) error {
 	return os.Remove(r.path(name))
-}
-
-func (r *realFS) Symlink(old, new string) error {
-	return os.Symlink(r.path(old), r.path(new))
 }
 
 func (r *realFS) Stat(name string) (fs.FileInfo, error) {

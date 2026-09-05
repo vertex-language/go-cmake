@@ -68,6 +68,13 @@ func register(name string, fn cmdFunc) {
 	commands[name] = fn
 }
 
+// cmdNoOp accepts and ignores a command whose effect is outside this
+// implementation's model. It is what a command is registered as when CMake
+// does something this package deliberately does not, and accepting it silently
+// is better than failing a configure over a directive that changes nothing
+// here.
+func cmdNoOp(context.Context, *evaluator, []Arg) error { return nil }
+
 // evaluator carries the state, filesystem, and call context through one
 // configure run. It exists so that command implementations can recurse into
 // the evaluator (include, add_subdirectory, cmake_language(EVAL)) without
