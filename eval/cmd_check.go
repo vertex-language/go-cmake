@@ -55,6 +55,7 @@ var builtinModules = map[string]bool{
 	"CheckCCompilerFlag":     true,
 	"CheckCXXCompilerFlag":   true,
 	"CMakeParseArguments":    true, // cmake_parse_arguments is a command here
+	"FetchContent":           true, // the FetchContent_* commands are registered
 	"GNUInstallDirs":         false,
 }
 

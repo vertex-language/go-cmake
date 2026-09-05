@@ -61,8 +61,14 @@ type Config struct {
 
 	FS     FS
 	Runner run.Runner
-	Out    io.Writer
-	Err    io.Writer
+
+	// Downloader fetches what a project declares it needs, for file(DOWNLOAD)
+	// and FetchContent. Leaving it nil is a working configuration, not a broken
+	// one: a project that asks to fetch is told plainly that this build does
+	// not, rather than quietly reaching the network.
+	Downloader eval.Downloader
+	Out        io.Writer
+	Err        io.Writer
 }
 
 type FS interface {
@@ -70,7 +76,14 @@ type FS interface {
 	WriteFile(name string, data []byte, perm fs.FileMode) error
 	MkdirAll(name string, perm fs.FileMode) error
 	Glob(pattern string) ([]string, error)
+	// Remove deletes a file or an empty directory.
 	Remove(name string) error
+
+	// RemoveAll deletes a path and anything under it, and reports no error for
+	// a path that was not there. The two are separate because file(REMOVE) must
+	// not delete a directory and file(REMOVE_RECURSE) must.
+	RemoveAll(name string) error
+
 	Stat(name string) (fs.FileInfo, error)
 }
 
@@ -252,6 +265,8 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 	// a different compiler than the one that builds the project would be worse
 	// than no probe at all.
 	state.Compiler = &probe{tc: c.tc, runner: c.cfg.Runner, dir: filepath.ToSlash(binary)}
+	state.Downloader = c.cfg.Downloader
+	state.Extractor = archiveExtractor{}
 
 	if err := c.cfg.FS.MkdirAll(binary, 0755); err != nil {
 		return nil, err
@@ -601,7 +616,7 @@ func (c *CMake) writeFileAPI(state *eval.State, graph *generate.Graph) error {
 	// previous configure names object files this one did not write, and a
 	// client reading the newest index would follow those names to stale data.
 	replyDir := state.BinaryDir + "/" + generate.ReplyDir()
-	_ = c.cfg.FS.Remove(replyDir)
+	_ = c.cfg.FS.RemoveAll(replyDir)
 	if err := c.cfg.FS.MkdirAll(replyDir, 0755); err != nil {
 		return err
 	}

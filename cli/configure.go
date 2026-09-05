@@ -42,6 +42,7 @@ func runConfigure(ctx context.Context, e Env, o *configureOptions) int {
 		Flags:        o.flags,
 		FS:           cmake.RealFS(e.Dir),
 		Runner:       run.OS(),
+		Downloader:   cmake.HTTPDownloader(),
 		Out:          e.Out,
 		Err:          e.Err,
 	})

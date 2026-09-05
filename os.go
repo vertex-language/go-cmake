@@ -41,6 +41,10 @@ func (r *realFS) Remove(name string) error {
 	return os.Remove(r.path(name))
 }
 
+func (r *realFS) RemoveAll(name string) error {
+	return os.RemoveAll(r.path(name))
+}
+
 func (r *realFS) Stat(name string) (fs.FileInfo, error) {
 	return os.Stat(r.path(name))
 }

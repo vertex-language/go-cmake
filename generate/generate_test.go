@@ -44,7 +44,8 @@ func (diskFS) WriteFile(n string, d []byte) error    { return os.WriteFile(n, d,
 func (diskFS) MkdirAll(name string) error            { return os.MkdirAll(name, 0755) }
 func (diskFS) Glob(p string) ([]string, error)       { return filepath.Glob(p) }
 func (diskFS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
-func (diskFS) Remove(name string) error              { return os.RemoveAll(name) }
+func (diskFS) Remove(name string) error              { return os.Remove(name) }
+func (diskFS) RemoveAll(name string) error           { return os.RemoveAll(name) }
 
 var _ = time.Now
 

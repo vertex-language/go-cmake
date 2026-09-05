@@ -303,6 +303,48 @@ func TestFileAPIReplyIsReplaced(t *testing.T) {
 	for _, o := range second["objects"].([]any) {
 		follow(t, reply, o.(map[string]any)["jsonFile"].(string))
 	}
+
+	// Nothing may be left over. Checking only for a second index is not enough:
+	// two configures within the same second produce the same index name, so a
+	// leftover would be overwritten rather than noticed, and the stale object
+	// files beside it would survive unseen.
+	named := map[string]bool{}
+	for _, o := range second["objects"].([]any) {
+		obj := follow(t, reply, o.(map[string]any)["jsonFile"].(string))
+		named[o.(map[string]any)["jsonFile"].(string)] = true
+		for _, ref := range referencedFiles(obj) {
+			named[ref] = true
+		}
+	}
+	entries, err := os.ReadDir(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, "index-") || named[name] {
+			continue
+		}
+		t.Errorf("a file from a previous reply survived: %s", name)
+	}
+}
+
+// referencedFiles collects every jsonFile a codemodel points at.
+func referencedFiles(obj map[string]any) []string {
+	var out []string
+	configs, _ := obj["configurations"].([]any)
+	for _, c := range configs {
+		config := c.(map[string]any)
+		for _, key := range []string{"targets", "directories"} {
+			list, _ := config[key].([]any)
+			for _, item := range list {
+				if f, ok := item.(map[string]any)["jsonFile"].(string); ok {
+					out = append(out, f)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func fmtObjects(index map[string]any) string {

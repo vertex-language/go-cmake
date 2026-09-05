@@ -117,6 +117,19 @@ type State struct {
 	// build that follows is wrong in a way nothing points at.
 	Compiler Compiler
 
+	// Downloader fetches what a project declares it needs. A nil Downloader
+	// makes file(DOWNLOAD) and FetchContent refuse rather than reach the
+	// network, which is the right default for a library: the decision to make
+	// a request belongs to the program embedding this one.
+	Downloader Downloader
+
+	// Extractor unpacks a fetched archive.
+	Extractor Extractor
+
+	// Content holds what FetchContent_Declare recorded, keyed by lower-cased
+	// name because every FetchContent command is case-insensitive about it.
+	Content map[string]*Content
+
 	// Unsupported records commands that were accepted but could not be honoured,
 	// so a caller can tell an incomplete configure from a complete one.
 	Unsupported []string

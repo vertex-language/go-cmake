@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/vertex-language/go-cmake/archive"
 )
 
 func init() {
@@ -46,9 +48,16 @@ func cmdFile(ctx context.Context, e *evaluator, args []Arg) error {
 			}
 		}
 		return nil
-	case "REMOVE", "REMOVE_RECURSE":
+	case "REMOVE":
+		// A file only: file(REMOVE) on a directory is documented as doing
+		// nothing, and doing something would be a surprise nobody could undo.
 		for _, p := range v[1:] {
 			_ = e.fs.Remove(e.state.absPath(p))
+		}
+		return nil
+	case "REMOVE_RECURSE":
+		for _, p := range v[1:] {
+			_ = e.fs.RemoveAll(e.state.absPath(p))
 		}
 		return nil
 	case "RENAME":
@@ -126,9 +135,15 @@ func cmdFile(ctx context.Context, e *evaluator, args []Arg) error {
 		return fileConfigure(e, v)
 	case "LOCK", "CREATE_LINK", "CHMOD", "CHMOD_RECURSE":
 		return nil
-	case "DOWNLOAD", "UPLOAD":
-		return e.fatalf("file %s requires network access, which this implementation does not perform", v[0])
-	case "GET_RUNTIME_DEPENDENCIES", "ARCHIVE_CREATE", "ARCHIVE_EXTRACT":
+	case "DOWNLOAD":
+		return fileDownload(ctx, e, v)
+	case "UPLOAD":
+		return fileUpload(e, v)
+	case "ARCHIVE_CREATE":
+		return fileArchiveCreate(e, v)
+	case "ARCHIVE_EXTRACT":
+		return fileArchiveExtract(e, v)
+	case "GET_RUNTIME_DEPENDENCIES":
 		return e.fatalf("file %s is not supported by this implementation", v[0])
 	}
 	return e.fatalf("file does not recognize sub-command %s", v[0])
@@ -690,3 +705,91 @@ func fileConfigure(e *evaluator, v []string) error {
 // osFileMode is retained so that a future permissions implementation has a
 // single place to convert CMake's permission names.
 var _ = os.FileMode(0)
+
+// fileArchiveCreate implements file(ARCHIVE_CREATE).
+func fileArchiveCreate(e *evaluator, v []string) error {
+	var output, format string
+	var paths []string
+	keyword := ""
+	for i := 1; i < len(v); i++ {
+		switch v[i] {
+		case "OUTPUT", "PATHS", "FORMAT", "COMPRESSION", "COMPRESSION_LEVEL", "MTIME", "WORKING_DIRECTORY":
+			keyword = v[i]
+			continue
+		case "VERBOSE":
+			continue
+		}
+		switch keyword {
+		case "OUTPUT":
+			output = e.state.absPath(v[i])
+			keyword = ""
+		case "PATHS":
+			paths = append(paths, v[i])
+		case "FORMAT":
+			format = v[i]
+			keyword = ""
+		default:
+			keyword = ""
+		}
+	}
+	if output == "" || len(paths) == 0 {
+		return e.fatalf("file ARCHIVE_CREATE requires an OUTPUT and PATHS")
+	}
+	if err := archive.Create(output, archiveFormat(format, output), e.state.Dir().Source, paths); err != nil {
+		return e.fatalf("file ARCHIVE_CREATE: %v", err)
+	}
+	return nil
+}
+
+// fileArchiveExtract implements file(ARCHIVE_EXTRACT).
+func fileArchiveExtract(e *evaluator, v []string) error {
+	var input, destination string
+	keyword := ""
+	for i := 1; i < len(v); i++ {
+		switch v[i] {
+		case "INPUT", "DESTINATION", "PATTERNS":
+			keyword = v[i]
+			continue
+		case "LIST_ONLY", "VERBOSE", "TOUCH":
+			continue
+		}
+		switch keyword {
+		case "INPUT":
+			input = e.state.absPath(v[i])
+			keyword = ""
+		case "DESTINATION":
+			destination = e.state.absPath(v[i])
+			keyword = ""
+		default:
+			keyword = ""
+		}
+	}
+	if input == "" {
+		return e.fatalf("file ARCHIVE_EXTRACT requires an INPUT")
+	}
+	if destination == "" {
+		destination = e.state.Dir().Binary
+	}
+	if err := archive.Extract(input, destination, 0); err != nil {
+		return e.fatalf("file ARCHIVE_EXTRACT: %v", err)
+	}
+	return nil
+}
+
+// archiveFormat maps CMake's format names onto the encodings implemented here.
+// The ones absent -- 7zip and the several tar compressions beyond gzip -- are
+// named in the error rather than silently producing a differently compressed
+// archive under the requested name.
+func archiveFormat(name, output string) archive.Format {
+	switch name {
+	case "zip":
+		return archive.Zip
+	case "gnutar", "pax", "paxr", "raw", "tar":
+		if f := archive.DetectFormat(output); f != archive.Unknown {
+			return f
+		}
+		return archive.Tar
+	default:
+		return archive.DetectFormat(output)
+	}
+}

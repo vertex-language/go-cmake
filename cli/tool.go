@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vertex-language/go-cmake/archive"
 	"github.com/vertex-language/go-cmake/run"
 )
 
@@ -35,7 +36,8 @@ func (scriptFS) WriteFile(name string, data []byte) error {
 func (scriptFS) MkdirAll(name string) error            { return os.MkdirAll(name, 0755) }
 func (scriptFS) Glob(pattern string) ([]string, error) { return filepath.Glob(pattern) }
 func (scriptFS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
-func (scriptFS) Remove(name string) error              { return os.RemoveAll(name) }
+func (scriptFS) Remove(name string) error              { return os.Remove(name) }
+func (scriptFS) RemoveAll(name string) error           { return os.RemoveAll(name) }
 
 // runToolMode dispatches `cmake -E <command>`.
 func runToolMode(ctx context.Context, e Env, args []string) int {
@@ -120,7 +122,7 @@ func runToolMode(ctx context.Context, e Env, args []string) int {
 	// Commands cmake has that this one does not. Naming them is what keeps a
 	// generated build rule that uses one from failing as a typo.
 	case "tar":
-		return fail("tar is not implemented by this cmake")
+		return toolTar(e, rest, fail)
 	case "bin2c":
 		return fail("bin2c is not implemented by this cmake")
 	case "delete_regv", "write_regv", "env_vs8_wince", "env_vs9_wince":
@@ -544,4 +546,72 @@ func runIn(ctx context.Context, e Env, dir string, argv []string, fail func(stri
 		return fail("%v", err)
 	}
 	return code
+}
+
+// toolTar implements `cmake -E tar`, whose option string is a single argument
+// of letters: c to create, x to extract, t to list, with z or j selecting a
+// compression and f saying that the next argument is the archive.
+func toolTar(e Env, args []string, fail func(string, ...any) int) int {
+	if len(args) < 2 {
+		return fail("tar expects a mode and an archive")
+	}
+	flags, rest := args[0], args[1:]
+
+	create, extract, list := false, false, false
+	for _, c := range flags {
+		switch c {
+		case 'c':
+			create = true
+		case 'x':
+			extract = true
+		case 't':
+			list = true
+		case 'z', 'j', 'J', 'v', 'f', '-':
+			// The compression is taken from the archive's name instead, which
+			// is what CMake does when the two disagree.
+		default:
+			return fail("tar does not understand the flag %q", string(c))
+		}
+	}
+
+	archivePath := rest[0]
+	paths := rest[1:]
+	dir := e.Dir
+	if dir == "" {
+		dir = "."
+	}
+	// `--` and `--format=` may appear between the archive and the paths.
+	var members []string
+	for _, p := range paths {
+		if p == "--" || strings.HasPrefix(p, "--format=") || strings.HasPrefix(p, "--mtime=") {
+			continue
+		}
+		members = append(members, p)
+	}
+
+	switch {
+	case create:
+		if len(members) == 0 {
+			return fail("tar c expects at least one path")
+		}
+		if err := archive.Create(archivePath, archive.Unknown, dir, members); err != nil {
+			return fail("%v", err)
+		}
+		return 0
+	case extract:
+		if err := archive.Extract(archivePath, dir, 0); err != nil {
+			return fail("%v", err)
+		}
+		return 0
+	case list:
+		names, err := archive.List(archivePath)
+		if err != nil {
+			return fail("%v", err)
+		}
+		for _, n := range names {
+			fmt.Fprintln(e.Out, n)
+		}
+		return 0
+	}
+	return fail("tar expects one of c, x or t")
 }

@@ -25,6 +25,7 @@ type FS interface {
 	Glob(pattern string) ([]string, error)
 	Stat(name string) (fs.FileInfo, error)
 	Remove(name string) error
+	RemoveAll(name string) error
 }
 
 // cmdFunc is the signature for a built-in command. Commands receive arguments

@@ -79,6 +79,7 @@ where each package stands; the coverage figures are `go test -cover`.
 | [`ninja`](ninja/) | parser, scheduler, build log | 77% |
 | [`build`](build/) | `--build` | — |
 | [`ctest`](ctest/) | the test runner: reads the generated test files, runs them, reports | — |
+| [`archive`](archive/) | tar and zip, for `-E tar`, `file(ARCHIVE_*)`, and fetched tarballs | — |
 | [`run`](run/) | the one Command and Runner every phase uses | — |
 | [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 44% |
 | [`cmake`](.) | the facade | 53% |
@@ -367,8 +368,11 @@ one that says it cannot.
 
 1. **Generators other than Ninja.** `Unix Makefiles`, `Visual Studio`, and
    `Xcode` are refused with a message, not approximated.
-2. **`FetchContent` and `ExternalProject`.** Both need network access.
-   `file(DOWNLOAD)` and `file(UPLOAD)` are refused for the same reason.
+2. **`ExternalProject`.** `FetchContent` is implemented; `ExternalProject`,
+   which drives a whole configure-build-install of its own at build time
+   rather than at configure time, is not. `file(UPLOAD)` is refused: sending
+   this machine's files to a remote host is not something building a project
+   requires.
 3. **CPack.** No packaging. The `ctest_*` script commands are absent too; they
    drive a dashboard submission rather than a test run.
 4. **18 of 132 documented commands**, of which 13 are `ctest_*` -- they drive a

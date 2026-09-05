@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,7 +26,8 @@ func (diskFS) Glob(pattern string) ([]string, error) { return filepath.Glob(patt
 
 func (diskFS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
 
-func (diskFS) Remove(name string) error { return os.RemoveAll(name) }
+func (diskFS) Remove(name string) error    { return os.Remove(name) }
+func (diskFS) RemoveAll(name string) error { return os.RemoveAll(name) }
 
 // memFS is an in-memory filesystem for tests that do not touch the disk.
 type memFS struct {
@@ -67,6 +69,16 @@ func (m *memFS) Stat(name string) (fs.FileInfo, error) {
 
 func (m *memFS) Remove(name string) error {
 	delete(m.files, filepath.ToSlash(name))
+	return nil
+}
+
+func (m *memFS) RemoveAll(name string) error {
+	prefix := filepath.ToSlash(name) + "/"
+	for path := range m.files {
+		if path == filepath.ToSlash(name) || strings.HasPrefix(path, prefix) {
+			delete(m.files, path)
+		}
+	}
 	return nil
 }
 

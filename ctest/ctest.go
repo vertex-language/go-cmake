@@ -502,4 +502,5 @@ func (realFS) WriteFile(name string, data []byte) error {
 func (realFS) MkdirAll(name string) error            { return os.MkdirAll(name, 0755) }
 func (realFS) Glob(pattern string) ([]string, error) { return filepath.Glob(pattern) }
 func (realFS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
-func (realFS) Remove(name string) error              { return os.RemoveAll(name) }
+func (realFS) Remove(name string) error              { return os.Remove(name) }
+func (realFS) RemoveAll(name string) error           { return os.RemoveAll(name) }

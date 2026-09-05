@@ -101,6 +101,16 @@ var notCMakeCommands = map[string]string{
 	"check_type_size":           "CheckTypeSize module",
 	"check_c_compiler_flag":     "CheckCCompilerFlag module",
 	"check_cxx_compiler_flag":   "CheckCXXCompilerFlag module",
+
+	// FetchContent is a module too, and the busiest one in modern CMake. It is
+	// implemented here for the same reason as the Check modules: the module is
+	// several hundred lines of CMake that drives a sub-configure, and doing the
+	// work directly is smaller than reproducing that machinery faithfully.
+	"fetchcontent_declare":       "FetchContent module",
+	"fetchcontent_makeavailable": "FetchContent module",
+	"fetchcontent_populate":      "FetchContent module",
+	"fetchcontent_getproperties": "FetchContent module",
+	"fetchcontent_setpopulated":  "FetchContent module",
 }
 
 func TestEveryRequiredCommandIsRegistered(t *testing.T) {
