@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -85,7 +86,7 @@ Options:
                        define a cache entry
   -U <globbing_expr>   remove matching cache entries
   --preset <name>      use a configure preset
-  --fresh              discard any existing cache
+  --fresh              accepted; no cache is kept, so every run is fresh
   --log-level <level>  ERROR, WARNING, NOTICE, STATUS, VERBOSE, DEBUG, TRACE
   -j, --parallel <n>   number of parallel jobs
   --version            print the version
@@ -247,7 +248,34 @@ func runConfigure(ctx context.Context, e Env, o *configureOptions) int {
 	fmt.Fprintln(e.Out, "-- Configuring done")
 	fmt.Fprintln(e.Out, "-- Generating done")
 	fmt.Fprintf(e.Out, "-- Build files have been written to: %s\n", parentDir(gen.BuildFile))
+
+	// A project that probed its compiler with try_compile got FALSE, which may
+	// have switched off a feature it could in fact have used. The build files
+	// are still written -- they are the best answer available -- but a silent
+	// success here would let that go unnoticed until someone wondered why an
+	// optimisation never turned on.
+	if used := unsupported(gen.State); len(used) > 0 {
+		fmt.Fprintf(e.Err, "CMake Warning: this build was configured without %s;\n"+
+			"  any feature test relying on it reported failure.\n", strings.Join(used, " and "))
+	}
+	if len(gen.State.Errors) > 0 {
+		return 1
+	}
 	return 0
+}
+
+// unsupported lists, once each, the commands configure could not honour.
+func unsupported(state *eval.State) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range state.Unsupported {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // runScript runs `cmake -P script.cmake`: the language with no project, no
