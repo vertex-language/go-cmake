@@ -55,6 +55,7 @@ As a program:
 
 ```console
 $ go install github.com/vertex-language/go-cmake/cmd/cmake@latest
+$ go install github.com/vertex-language/go-cmake/cmd/ctest@latest
 ```
 
 ---
@@ -77,6 +78,7 @@ where each package stands; the coverage figures are `go test -cover`.
 | [`toolchain`](toolchain/) | GCC, Clang, MSVC discovery | — |
 | [`ninja`](ninja/) | parser, scheduler, build log | 77% |
 | [`build`](build/) | `--build` | — |
+| [`ctest`](ctest/) | the test runner: reads the generated test files, runs them, reports | — |
 | [`run`](run/) | the one Command and Runner every phase uses | — |
 | [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 44% |
 | [`cmake`](.) | the facade | 53% |
@@ -100,9 +102,9 @@ observable stage here.
 | **Generate** | The configured state is resolved into a build graph — usage requirements propagated, generator expressions evaluated, link order computed — and written as `build.ninja`. Nothing is compiled. |
 | **Build** | The build graph is scheduled and executed. |
 
-Installing is a fourth step and deliberately not a phase: generate writes a
-`cmake_install.cmake` into the build tree, and `cmake --install` is that script
-run with three variables set. The prefix, the component, and the configuration
+Installing and testing are further steps and deliberately not phases: generate writes a
+`cmake_install.cmake` and a `CTestTestfile.cmake` into the build tree, and
+`cmake --install` and `ctest` are those scripts read back. The prefix, the component, and the configuration
 are questions that cannot be answered at generate time, so the script defers
 them to the moment they can be. It also means a build tree carries a readable
 list of exactly what it will install and where.
@@ -314,6 +316,11 @@ func Main(ctx context.Context, e Env) int
 | install | `cmake --install <dir> [--prefix ...] [--component ...] [--config ...] [--strip]` |
 | script | `cmake -P <script.cmake> [args...]` — the language with no project and no cache |
 | tool | `cmake -E <command>` — the portable shell that generated build rules call |
+| test | `ctest [--test-dir <dir>] [-R <r>] [-E <r>] [-L <r>] [-LE <r>] [-j N] [-N] [--output-on-failure] [--stop-on-failure]` |
+
+`ctest` is a second binary, as it is for CMake, because it takes a build tree
+rather than a source tree and its options mean different things: `-R` selects
+tests there and is not an option for `cmake` at all.
 
 Flags that change only diagnostics (`--trace`, `-Wdev`, `--warn-uninitialized`,
 `--debug-find`, and friends) are accepted and ignored. Options CMake has that
@@ -365,8 +372,8 @@ one that says it cannot.
    fails later, more confusingly.
 3. **`FetchContent` and `ExternalProject`.** Both need network access.
    `file(DOWNLOAD)` and `file(UPLOAD)` are refused for the same reason.
-4. **CTest and CPack.** `add_test` and `enable_testing` record what a project
-   declares; no test driver runs it. The `ctest_*` script commands are absent.
+4. **CPack.** No packaging. The `ctest_*` script commands are absent too; they
+   drive a dashboard submission rather than a test run.
 5. **39 of 132 documented commands**, of which 13 are `ctest_*` and most of the
    rest are CMake 2.x spellings kept alive for compatibility (`exec_program`,
    `install_files`, `subdirs`, `qt_wrap_cpp`, `use_mangled_mesa`).
