@@ -78,8 +78,8 @@ where each package stands; the coverage figures are `go test -cover`.
 | [`ninja`](ninja/) | parser, scheduler, build log | 77% |
 | [`build`](build/) | `--build` | — |
 | [`run`](run/) | the one Command and Runner every phase uses | — |
-| [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 42% |
-| [`cmake`](.) | the facade | 51% |
+| [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 44% |
+| [`cmake`](.) | the facade | 53% |
 
 **What demonstrably works.** The end-to-end tests in
 [`endtoend_test.go`](endtoend_test.go) compile, link, and *run* real programs
@@ -144,6 +144,10 @@ generate|  usage-requirement closure, link order, generator expressions,
         v
      the files
 ```
+
+[`run`](run/) sits beside all of them rather than in the chain: every phase that
+starts a process goes through its one `Runner`, so intercepting compiler
+invocations is a single substitution rather than four.
 
 The CMake language they implement is specified in
 [docs/grammar.md](docs/grammar.md) — productions rather than prose, because the
