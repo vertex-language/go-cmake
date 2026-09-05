@@ -247,6 +247,12 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 	}
 	state.Cache.Set("CMAKE_COMMAND", selfPath(), eval.CacheInternal, "", true)
 
+	// try_compile needs a compiler and somewhere to work. Handing it the same
+	// toolchain the generator will use is the point: a probe that answered for
+	// a different compiler than the one that builds the project would be worse
+	// than no probe at all.
+	state.Compiler = &probe{tc: c.tc, runner: c.cfg.Runner, dir: filepath.ToSlash(binary)}
+
 	if err := c.cfg.FS.MkdirAll(binary, 0755); err != nil {
 		return nil, err
 	}

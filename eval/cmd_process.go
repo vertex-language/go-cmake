@@ -201,37 +201,3 @@ func (s *State) envSlice() []string {
 	}
 	return out
 }
-
-// cmdTryCompile reports failure rather than a false success.
-//
-// A real try_compile writes a small project, configures it, and builds it. That
-// requires a working generator and toolchain, which is a build-phase concern.
-// Returning TRUE here would be worse than returning FALSE: a project would
-// enable a feature its compiler does not have and fail later with a confusing
-// error, so the result is FALSE and the reason is recorded where the project
-// can see it.
-func cmdTryCompile(_ context.Context, e *evaluator, args []Arg) error {
-	v := Args(args)
-	if len(v) == 0 {
-		return e.fatalf("try_compile called with incorrect number of arguments")
-	}
-	e.state.SetVar(v[0], "FALSE")
-	for i := 1; i+1 < len(v); i++ {
-		if v[i] == "OUTPUT_VARIABLE" {
-			e.state.SetVar(v[i+1], "try_compile is not implemented by this CMake implementation")
-		}
-	}
-	e.state.Unsupported = append(e.state.Unsupported, "try_compile")
-	return nil
-}
-
-func cmdTryRun(_ context.Context, e *evaluator, args []Arg) error {
-	v := Args(args)
-	if len(v) < 2 {
-		return e.fatalf("try_run called with incorrect number of arguments")
-	}
-	e.state.SetVar(v[0], "FAILED_TO_RUN")
-	e.state.SetVar(v[1], "FALSE")
-	e.state.Unsupported = append(e.state.Unsupported, "try_run")
-	return nil
-}

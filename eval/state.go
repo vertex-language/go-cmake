@@ -107,6 +107,12 @@ type State struct {
 	// commands report an error rather than silently succeed.
 	Runner run.Runner
 
+	// Compiler answers try_compile. A nil Compiler makes the probe report that
+	// it could not be answered, which is the only honest result: a project told
+	// its compiler lacks a feature it has will disable that feature, and the
+	// build that follows is wrong in a way nothing points at.
+	Compiler Compiler
+
 	// Unsupported records commands that were accepted but could not be honoured,
 	// so a caller can tell an incomplete configure from a complete one.
 	Unsupported []string

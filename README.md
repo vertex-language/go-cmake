@@ -367,23 +367,20 @@ one that says it cannot.
 
 1. **Generators other than Ninja.** `Unix Makefiles`, `Visual Studio`, and
    `Xcode` are refused with a message, not approximated.
-2. **`try_compile` and `try_run`.** They report failure rather than a false
-   success: a project that is told its compiler supports a feature it does not
-   fails later, more confusingly.
-3. **`FetchContent` and `ExternalProject`.** Both need network access.
+2. **`FetchContent` and `ExternalProject`.** Both need network access.
    `file(DOWNLOAD)` and `file(UPLOAD)` are refused for the same reason.
-4. **CPack.** No packaging. The `ctest_*` script commands are absent too; they
+3. **CPack.** No packaging. The `ctest_*` script commands are absent too; they
    drive a dashboard submission rather than a test run.
-5. **39 of 132 documented commands**, of which 13 are `ctest_*` and most of the
+4. **37 of 132 documented commands**, of which 13 are `ctest_*` and most of the
    rest are CMake 2.x spellings kept alive for compatibility (`exec_program`,
-   `install_files`, `subdirs`, `qt_wrap_cpp`, `use_mangled_mesa`).
-6. **Multi-config generators.** One configuration per build directory.
-7. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
+   `install_files`, `qt_wrap_cpp`, `use_mangled_mesa`).
+5. **Multi-config generators.** One configuration per build directory.
+6. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
    scanning.**
-8. **The regex dialect.** CMake uses its own engine; this uses Go's RE2. Every
+7. **The regex dialect.** CMake uses its own engine; this uses Go's RE2. Every
    pattern CMake accepts, RE2 accepts, but RE2 also accepts patterns CMake would
    reject — so a bad regex may work here and fail under real CMake.
-9. **`.ninja_deps` binary compatibility.** The dependency log is written as
+8. **`.ninja_deps` binary compatibility.** The dependency log is written as
     text, and the build log's command field holds this implementation's hash
     rather than upstream ninja's. Sharing a build directory with real `ninja`
     costs one extra rebuild, never a stale object.

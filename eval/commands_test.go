@@ -81,6 +81,26 @@ var notCMakeCommands = map[string]string{
 	// with it, so providing it is what makes a project's own find modules work
 	// without shipping CMake's module directory.
 	"find_package_handle_standard_args": "provided so project find modules work",
+
+	// The Check modules are .cmake files in CMake's distribution rather than
+	// builtins. They are implemented here as commands instead: shipping copies
+	// would mean tracking a moving target belonging to a version of CMake this
+	// package does not control, and the question each asks is small enough that
+	// asking it directly is both less code and harder to get subtly wrong.
+	"check_include_file":        "CheckIncludeFile module",
+	"check_include_file_cxx":    "CheckIncludeFileCXX module",
+	"check_include_files":       "CheckIncludeFiles module",
+	"check_c_source_compiles":   "CheckCSourceCompiles module",
+	"check_cxx_source_compiles": "CheckCXXSourceCompiles module",
+	"check_c_source_runs":       "CheckCSourceRuns module",
+	"check_cxx_source_runs":     "CheckCXXSourceRuns module",
+	"check_function_exists":     "CheckFunctionExists module",
+	"check_symbol_exists":       "CheckSymbolExists module",
+	"check_cxx_symbol_exists":   "CheckCXXSymbolExists module",
+	"check_library_exists":      "CheckLibraryExists module",
+	"check_type_size":           "CheckTypeSize module",
+	"check_c_compiler_flag":     "CheckCCompilerFlag module",
+	"check_cxx_compiler_flag":   "CheckCXXCompilerFlag module",
 }
 
 func TestEveryRequiredCommandIsRegistered(t *testing.T) {

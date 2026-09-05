@@ -36,6 +36,16 @@ func cmdInclude(ctx context.Context, e *evaluator, args []Arg) error {
 		}
 	}
 
+	// A module whose commands this package implements directly needs no file.
+	// Saying so here rather than shipping an empty .cmake keeps the reason
+	// visible: the command is already registered, so there is nothing to load.
+	if builtinModules[strings.TrimSuffix(file, ".cmake")] {
+		if resultVar != "" {
+			e.state.SetVar(resultVar, "")
+		}
+		return nil
+	}
+
 	path := e.resolveInclude(file)
 	if path == "" {
 		if resultVar != "" {
