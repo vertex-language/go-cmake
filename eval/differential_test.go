@@ -81,6 +81,8 @@ func runOurs(t *testing.T, dir, script string) string {
 			sb.WriteString("CMake Warning (author)\n  " + text + "\n")
 		case "DEPRECATION":
 			sb.WriteString("CMake Warning (deprecated)\n  " + text + "\n")
+		case "POLICY":
+			sb.WriteString("CMake Warning (policy)\n  " + text + "\n")
 		default:
 			sb.WriteString(mode + ": " + text + "\n")
 		}
@@ -116,8 +118,16 @@ func normalise(s string) string {
 			out = append(out, "CMake Warning (deprecated)")
 			continue
 		}
+		if strings.HasPrefix(line, "CMake Warning (policy)") {
+			out = append(out, "CMake Warning (policy)")
+			continue
+		}
+		// The developer-warning footer wraps onto a second line, so both halves
+		// have to go or the comparison sees a stray fragment.
 		if strings.HasPrefix(line, "Call Stack") || strings.HasPrefix(line, "  script.cmake") ||
-			strings.HasPrefix(line, "  ours.cmake") || strings.HasPrefix(line, "This warning is for project developers") {
+			strings.HasPrefix(line, "  ours.cmake") ||
+			strings.HasPrefix(line, "This warning is for project developers") ||
+			line == "suppress it." {
 			continue
 		}
 		out = append(out, line)

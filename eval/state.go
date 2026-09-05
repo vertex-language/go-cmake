@@ -84,6 +84,10 @@ type State struct {
 	// DefinedProps records the properties declared with define_property.
 	DefinedProps map[string]bool
 
+	// ScriptMode is set when the language is being evaluated by `cmake -P`,
+	// where there is no project for a project-declaring command to act on.
+	ScriptMode bool
+
 	// TestingEnabled is set by enable_testing().
 	TestingEnabled bool
 

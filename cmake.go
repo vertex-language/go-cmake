@@ -382,6 +382,26 @@ func (c *CMake) generateFrom(ctx context.Context, state *eval.State) (*GenerateR
 		return nil, err
 	}
 
+	// A language server reads compile_commands.json and nothing else. Writing
+	// it when the project asks -- or when the caller does, since an editor's
+	// need for it is independent of what the project declared -- is what makes
+	// an editor able to parse the code the build compiles.
+	if eval.IsOn(state.GetVar("CMAKE_EXPORT_COMPILE_COMMANDS")) {
+		db := &generate.CompileCommands{
+			Graph:     graph,
+			Toolchain: c.toolchain(state),
+			SourceDir: state.SourceDir,
+			BinaryDir: state.BinaryDir,
+		}
+		var buf bytes.Buffer
+		if err := db.Write(&buf); err != nil {
+			return nil, err
+		}
+		if err := c.cfg.FS.WriteFile(state.BinaryDir+"/compile_commands.json", buf.Bytes(), 0644); err != nil {
+			return nil, err
+		}
+	}
+
 	// The tests go out per directory, so that running the tests from a
 	// subdirectory of the build tree runs that subtree's and nothing else.
 	tests := &generate.CTest{

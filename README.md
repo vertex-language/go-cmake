@@ -73,7 +73,7 @@ where each package stands; the coverage figures are `go test -cover`.
 | [`ast`](ast/) | complete | — |
 | [`parser`](parser/) | complete | 76% |
 | [`expr`](expr/) | complete | 64% |
-| [`eval`](eval/) | 93 of 132 documented commands (76 in the command table, 17 control-flow constructs) | 55% |
+| [`eval`](eval/) | 114 of 132 documented commands (97 in the command table, 17 control-flow constructs) | 55% |
 | [`generate`](generate/) | usage-requirement closure, generator expressions, Ninja output | 51% |
 | [`toolchain`](toolchain/) | GCC, Clang, MSVC discovery | — |
 | [`ninja`](ninja/) | parser, scheduler, build log | 77% |
@@ -371,9 +371,10 @@ one that says it cannot.
    `file(DOWNLOAD)` and `file(UPLOAD)` are refused for the same reason.
 3. **CPack.** No packaging. The `ctest_*` script commands are absent too; they
    drive a dashboard submission rather than a test run.
-4. **37 of 132 documented commands**, of which 13 are `ctest_*` and most of the
-   rest are CMake 2.x spellings kept alive for compatibility (`exec_program`,
-   `install_files`, `qt_wrap_cpp`, `use_mangled_mesa`).
+4. **18 of 132 documented commands**, of which 13 are `ctest_*` -- they drive a
+   dashboard submission rather than a build -- and the rest are CMake 4.x
+   additions: `cmake_file_api`, `cmake_pkg_config`, `cmake_instrumentation`,
+   `cmake_diagnostic`, `discover_tests`.
 5. **Multi-config generators.** One configuration per build directory.
 6. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
    scanning.**

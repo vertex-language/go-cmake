@@ -133,6 +133,7 @@ func EvalScript(ctx context.Context, state *State, filesystem FS, path string) e
 	}
 	abs = slashPath(abs)
 	e := &evaluator{state: state, fs: filesystem}
+	state.ScriptMode = true
 	state.Current.Set("CMAKE_SCRIPT_MODE_FILE", abs)
 	err = e.evalFile(ctx, abs)
 	if _, ok := err.(returnSignal); ok {

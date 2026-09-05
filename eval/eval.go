@@ -185,6 +185,9 @@ func (e *evaluator) evalCommand(ctx context.Context, c *ast.CommandInvocation) e
 		return e.wrap(c, e.callMacro(ctx, mac, args))
 	}
 	if handler, ok := commands[name]; ok {
+		if e.state.ScriptMode && projectOnlyCommands[name] {
+			return e.errorAt(c, name+" command is not scriptable")
+		}
 		return e.wrap(c, handler(ctx, e, args))
 	}
 
