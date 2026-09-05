@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/vertex-language/go-cmake/eval"
+	"github.com/vertex-language/go-cmake/regex"
 	"github.com/vertex-language/go-cmake/toolchain"
 )
 
@@ -436,7 +437,7 @@ func (c *genexContext) evalFilter(args string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	re, err := compileRegex(pattern)
+	re, err := regex.Compile(pattern)
 	if err != nil {
 		return "", err
 	}

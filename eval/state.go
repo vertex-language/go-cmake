@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -32,9 +33,19 @@ type State struct {
 	SourceDir string
 	BinaryDir string
 
+	// Out and Err are where a child process writes when the project did not ask
+	// to capture it. CMake passes such output straight through -- a build that
+	// runs a code generator shows what the generator says -- so a caller that
+	// leaves these nil is asking for that output to be dropped.
+	Out io.Writer
+	Err io.Writer
+
 	// For error reporting.
 	File string
 	Line int
+	// Cmd is the command being evaluated, which CMake names in the banner of
+	// every diagnostic it raises.
+	Cmd string
 
 	// For macro/function definitions.
 	Macros    map[string]*MacroDef
@@ -561,12 +572,31 @@ func (s *State) setPosition(c *ast.CommandInvocation) {
 	if s.FileSet == nil {
 		return
 	}
+	s.Cmd = c.Name.Lit
 	pos := s.FileSet.Position(c.Pos())
 	if pos.IsValid() {
 		s.File = pos.Filename
 		s.Line = pos.Line
 	}
 }
+
+// stdout and stderr are where uncaptured child output goes.
+func (s *State) stdout() io.Writer {
+	if s.Out == nil {
+		return io.Discard
+	}
+	return s.Out
+}
+
+func (s *State) stderr() io.Writer {
+	if s.Err == nil {
+		return io.Discard
+	}
+	return s.Err
+}
+
+// ErrorPath is the current file as a diagnostic should name it.
+func (s *State) ErrorPath() string { return ReportPath(s.SourceDir, s.File) }
 
 // log emits a message() line through the sink, or to stdout if none is set.
 func (s *State) log(mode, text string) {

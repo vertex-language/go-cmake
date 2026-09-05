@@ -71,13 +71,12 @@ func cmdCMakePolicy(_ context.Context, e *evaluator, args []Arg) error {
 		if vals[2] == "OLD" {
 			available, intro := OldBehaviorAvailable(vals[1])
 			if !available {
-				return e.fatalf("Policy %s may not be set to OLD behavior because this version of CMake\n"+
-					"  no longer supports it.  The policy was introduced in CMake version %s.0,\n"+
-					"  and use of NEW behavior is now required.\n"+
-					"\n"+
-					"  Please either update your CMakeLists.txt files to conform to the new\n"+
-					"  behavior or use an older version of CMake that still supports the old\n"+
-					"  behavior.  Run cmake --help-policy %s for more information.",
+				return e.fatalf("Policy %s may not be set to OLD behavior because this version of CMake"+
+					" no longer supports it. The policy was introduced in CMake version %s.0,"+
+					" and use of NEW behavior is now required.\n"+
+					"Please either update your CMakeLists.txt files to conform to the new"+
+					" behavior or use an older version of CMake that still supports the old"+
+					" behavior. Run cmake --help-policy %s for more information.",
 					vals[1], intro, vals[1])
 			}
 			e.state.log("DEPRECATION", sprintf(

@@ -80,6 +80,7 @@ where each package stands; the coverage figures are `go test -cover`.
 | [`build`](build/) | `--build` | — |
 | [`ctest`](ctest/) | the test runner: reads the generated test files, runs them, reports | — |
 | [`archive`](archive/) | tar and zip, for `-E tar`, `file(ARCHIVE_*)`, and fetched tarballs | — |
+| [`regex`](regex/) | CMake's regular expressions, which are not Go's | — |
 | [`run`](run/) | the one Command and Runner every phase uses | — |
 | [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 44% |
 | [`cmake`](.) | the facade | 53% |
@@ -351,6 +352,12 @@ though `" 5 " LESS 10` is true), that a directory's compile definitions are
 copied into its targets (they are not, unlike its include directories). If no
 `cmake` is installed, these skip.
 
+**Byte-for-byte tests** (`diagnostics_test.go`) are the differential tests with
+the normalising taken away: the same script goes to both programs and the output
+has to be equal, byte for byte, wrapping and blank lines included. A diagnostic
+is the part of a build tool people actually read, and one that wraps at a
+different column is a difference somebody has to reconcile by hand.
+
 **End-to-end tests** (`endtoend_test.go`) compile, link, and run real programs.
 They are the only tests that can catch a build file that parses, schedules, and
 produces a binary that does not work.
@@ -383,9 +390,11 @@ one that says it cannot.
 5. **Multi-config generators.** One configuration per build directory.
 6. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
    scanning.**
-7. **The regex dialect.** CMake uses its own engine; this uses Go's RE2. Every
-   pattern CMake accepts, RE2 accepts, but RE2 also accepts patterns CMake would
-   reject — so a bad regex may work here and fail under real CMake.
+7. **The regex engine's own chatter.** When a pattern will not compile, CMake
+   writes two lines from its vendored C++ matcher — `RegularExpression::compile():
+   Nested *?+.` and `Error in compile.` — before the command reports the failure.
+   The failure itself is reported identically; those two lines are not. The
+   reason is still there for anyone embedding the package: it is on the error.
 8. **`.ninja_deps` binary compatibility.** The dependency log is written as
     text, and the build log's command field holds this implementation's hash
     rather than upstream ninja's. Sharing a build directory with real `ninja`

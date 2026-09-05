@@ -1,7 +1,6 @@
 package generate
 
 import (
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -11,20 +10,6 @@ import (
 
 // These are the small pieces the generator expressions need that have no home
 // of their own.
-
-var regexCache = map[string]*regexp.Regexp{}
-
-func compileRegex(pattern string) (*regexp.Regexp, error) {
-	if re, ok := regexCache[pattern]; ok {
-		return re, nil
-	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-	regexCache[pattern] = re
-	return re, nil
-}
 
 func numericEqual(a, b string) bool {
 	x, errA := strconv.ParseFloat(strings.TrimSpace(a), 64)

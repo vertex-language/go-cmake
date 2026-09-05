@@ -54,7 +54,7 @@ func cmdInclude(ctx context.Context, e *evaluator, args []Arg) error {
 		if optional {
 			return nil
 		}
-		return e.fatalf("include could not find requested file:\n\n    %s", file)
+		return e.fatalf("include could not find requested file:\n  %s", file)
 	}
 	if resultVar != "" {
 		e.state.SetVar(resultVar, path)

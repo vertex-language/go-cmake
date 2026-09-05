@@ -227,7 +227,8 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 
 	state := eval.NewState(filepath.ToSlash(source), filepath.ToSlash(binary), c.cfg.Env)
 	state.Runner = c.cfg.Runner
-	state.LogSink = c.logSink()
+	state.Out, state.Err = c.cfg.Out, c.cfg.Out
+	state.LogSink = c.logSink(state)
 	// A -D assignment wins over a remembered value, so it goes in first and
 	// the loaded cache fills in only what the command line did not mention.
 	for k, v := range c.cfg.Vars {
@@ -317,20 +318,48 @@ func (c *CMake) saveCache(state *eval.State, binary string) error {
 
 // logSink renders message() output the way CMake prints it. A nil Out means the
 // caller wants silence, which is different from wanting the default.
-func (c *CMake) logSink() func(mode, text string) {
+func (c *CMake) logSink(state *eval.State) func(mode, text string) {
 	if c.cfg.Out == nil {
 		return func(string, string) {}
 	}
 	out := c.cfg.Out
 	return func(mode, text string) {
-		switch mode {
-		case "":
-			fmt.Fprintln(out, text)
-		case "STATUS":
+		if mode == "STATUS" {
 			fmt.Fprintln(out, "-- "+text)
-		default:
-			fmt.Fprintf(out, "%s: %s\n", mode, text)
+			return
 		}
+		if mode == "" {
+			fmt.Fprintln(out, text)
+			return
+		}
+		// Everything else is a complaint, and CMake lays those out under a
+		// banner naming where they came from.
+		kind := "CMake Warning"
+		footer := ""
+		switch mode {
+		case "ERROR":
+			kind = "CMake Error"
+		case "AUTHOR_WARNING":
+			kind = "CMake Warning (author)"
+			footer = "This warning is for project developers.  Use -Wno-author to suppress it.\n\n"
+		case "DEPRECATION":
+			kind = "CMake Warning (deprecated)"
+			footer = "This warning is for project developers.  Use -Wno-author or -Wno-deprecated\nto suppress it.\n\n"
+		case "POLICY":
+			kind = "CMake Warning (policy)"
+			footer = "This warning is for project developers.  Use -Wno-author or -Wno-policy to\nsuppress it.\n\n"
+		}
+		banner := kind
+		if state.File != "" {
+			banner = fmt.Sprintf("%s at %s:%d", kind, eval.ReportPath(state.SourceDir, state.File), state.Line)
+			if state.Cmd != "" {
+				banner += " (" + state.Cmd + ")"
+			}
+		}
+		if footer == "" {
+			footer = "\n"
+		}
+		fmt.Fprint(out, eval.Diagnostic(banner, text), footer)
 	}
 }
 
@@ -567,7 +596,8 @@ func (c *CMake) Install(ctx context.Context, opts InstallOptions) error {
 
 	state := eval.NewState(binary, binary, c.cfg.Env)
 	state.Runner = c.cfg.Runner
-	state.LogSink = c.logSink()
+	state.Out, state.Err = c.cfg.Out, c.cfg.Out
+	state.LogSink = c.logSink(state)
 	if opts.Prefix != "" {
 		state.SetVar("CMAKE_INSTALL_PREFIX", filepath.ToSlash(opts.Prefix))
 	}

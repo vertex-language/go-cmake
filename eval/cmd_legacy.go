@@ -49,14 +49,14 @@ func cmdExecProgram(ctx context.Context, e *evaluator, args []Arg) error {
 	// rather than breaking it on the day the replacement arrives.
 	switch e.state.PolicyGet("CMP0153") {
 	case "NEW":
-		return e.fatalf("The exec_program command should not be called; see CMP0153.  Use" +
-			"\n  execute_process() instead.")
+		return e.fatalf("The exec_program command should not be called; see CMP0153." +
+			" Use execute_process() instead.")
 	case "OLD":
 	default:
 		e.state.log("POLICY", "Policy CMP0153 is not set: The exec_program command should not be called."+
-			"\n  Run \"cmake --help-policy CMP0153\" for policy details.  Use the cmake_policy"+
-			"\n  command to set the policy and suppress this warning."+
-			"\n\n  Use execute_process() instead.")
+			" Run \"cmake --help-policy CMP0153\" for policy details. Use the cmake_policy"+
+			" command to set the policy and suppress this warning.\n"+
+			"Use execute_process() instead.")
 	}
 
 	program := v[0]

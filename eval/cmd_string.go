@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 func init() {
@@ -115,31 +117,28 @@ func strRegex(e *evaluator, v []string) error {
 		if len(v) < 4 {
 			return e.fatalf("string REGEX MATCH called with incorrect number of arguments")
 		}
-		re, err := compileCMakeRegex(v[2])
+		re, err := regex.Compile(v[2])
 		if err != nil {
-			return e.fatalf("string REGEX MATCH: %v", err)
+			return e.fatalf("string sub-command REGEX, mode MATCH: Failed to compile regex %q.", v[2])
 		}
-		input := strings.Join(v[4:], "")
-		m := re.FindStringSubmatch(input)
+		m := re.Match(strings.Join(v[4:], ""))
+		setMatchVars(e.state, m)
 		if m == nil {
 			e.state.SetVar(v[3], "")
-			setMatchVars(e.state, nil)
 			return nil
 		}
 		e.state.SetVar(v[3], m[0])
-		setMatchVars(e.state, m)
 		return nil
 
 	case "MATCHALL":
 		if len(v) < 4 {
 			return e.fatalf("string REGEX MATCHALL called with incorrect number of arguments")
 		}
-		re, err := compileCMakeRegex(v[2])
+		re, err := regex.Compile(v[2])
 		if err != nil {
-			return e.fatalf("string REGEX MATCHALL: %v", err)
+			return e.fatalf("string sub-command REGEX, mode MATCHALL: Failed to compile regex %q.", v[2])
 		}
-		input := strings.Join(v[4:], "")
-		all := re.FindAllStringSubmatch(input, -1)
+		all := re.MatchAll(strings.Join(v[4:], ""))
 		var out []string
 		for _, m := range all {
 			out = append(out, m[0])
@@ -156,60 +155,52 @@ func strRegex(e *evaluator, v []string) error {
 		if len(v) < 5 {
 			return e.fatalf("string REGEX REPLACE called with incorrect number of arguments")
 		}
-		re, err := compileCMakeRegex(v[2])
+		re, err := regex.Compile(v[2])
 		if err != nil {
-			return e.fatalf("string REGEX REPLACE: %v", err)
+			return e.fatalf("string sub-command REGEX, mode REPLACE: Failed to compile regex %q.", v[2])
 		}
-		input := strings.Join(v[5:], "")
-		repl, err := cmakeReplacement(v[3])
+		with, err := regex.ParseReplacement(v[3])
 		if err != nil {
-			return e.fatalf("string REGEX REPLACE: %v", err)
+			return e.fatalf("string sub-command REGEX, mode REPLACE: %v.", err)
 		}
-		e.state.SetVar(v[4], re.ReplaceAllString(input, repl))
+		e.state.SetVar(v[4], re.Replace(strings.Join(v[5:], ""), with))
 		return nil
 	}
 	return e.fatalf("string REGEX does not recognize sub-command %s", v[1])
 }
 
-// cmakeReplacement translates CMake's \1 backreference syntax into the ${1}
-// form Go's regexp package expects, and escapes any literal $ so that it is not
-// read as a Go template reference.
-func cmakeReplacement(s string) (string, error) {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		switch {
-		case s[i] == '$':
-			b.WriteString("$$")
-		case s[i] == '\\' && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9':
-			b.WriteString("${")
-			b.WriteByte(s[i+1])
-			b.WriteString("}")
-			i++
-		case s[i] == '\\' && i+1 < len(s):
-			b.WriteByte(s[i+1])
-			i++
-		default:
-			b.WriteByte(s[i])
-		}
-	}
-	return b.String(), nil
-}
-
 // setMatchVars publishes CMAKE_MATCH_<n> after a regex operation.
+//
+// All ten are always set, empty where there was nothing to put in them: CMake
+// does not remove them, so once any regex has run they stay defined. Pass nil
+// for a match that failed.
+//
+// CMAKE_MATCH_COUNT is not the number of groups the pattern has. It is the
+// highest index that matched something non-empty, which is why a pattern whose
+// last group matched the empty string reports a lower count than the pattern
+// suggests -- and why a pattern that matched only the empty string leaves the
+// count empty rather than zero.
 func setMatchVars(s *State, m []string) {
 	for i := 0; i < 10; i++ {
 		name := "CMAKE_MATCH_" + strconv.Itoa(i)
 		if i < len(m) {
 			s.SetVar(name, m[i])
 		} else {
-			s.UnsetVar(name)
+			s.SetVar(name, "")
 		}
 	}
-	if len(m) == 0 {
+	if m == nil {
+		// A match that failed is the one case that reports zero.
 		s.SetVar("CMAKE_MATCH_COUNT", "0")
-	} else {
-		s.SetVar("CMAKE_MATCH_COUNT", strconv.Itoa(len(m)-1))
+		return
 	}
+	count := ""
+	for i := 0; i < 10 && i < len(m); i++ {
+		if m[i] != "" {
+			count = strconv.Itoa(i)
+		}
+	}
+	s.SetVar("CMAKE_MATCH_COUNT", count)
 }
 
 func strAppend(e *evaluator, v []string) error {

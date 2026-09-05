@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -118,29 +119,28 @@ func runScript(ctx context.Context, e Env, o *configureOptions) int {
 	if dir == "" {
 		dir = "."
 	}
+	// The absolute form, because it is what a diagnostic measures the script's
+	// own path against: cmake names "s.cmake", not the path it resolved to.
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	state := eval.NewState(dir, dir, e.Env)
 	state.Runner = run.OS()
-	state.LogSink = func(mode, text string) {
-		switch mode {
-		case "":
-			fmt.Fprintln(e.Out, text)
-		case "STATUS":
-			fmt.Fprintln(e.Out, "-- "+text)
-		case "ERROR":
-			fmt.Fprintf(e.Err, "CMake Error:\n  %s\n", text)
-		case "AUTHOR_WARNING", "DEPRECATION", "WARNING":
-			fmt.Fprintf(e.Err, "CMake Warning:\n  %s\n", text)
-		default:
-			fmt.Fprintln(e.Out, text)
-		}
-	}
+	state.Out, state.Err = e.Out, e.Err
+	state.LogSink = messageSink(e, state)
 	// -- arguments after the script are visible to it as CMAKE_ARGV<n>.
 	state.SetVar("CMAKE_ARGC", strconv.Itoa(len(o.scriptArg)))
 	for i, a := range o.scriptArg {
 		state.SetVar("CMAKE_ARGV"+strconv.Itoa(i), a)
 	}
 
-	if err := eval.EvalScript(ctx, state, scriptFS{}, o.script); err != nil {
+	// The script is named relative to the working directory, not to wherever
+	// the process happens to have been started.
+	script := o.script
+	if !filepath.IsAbs(script) {
+		script = filepath.Join(dir, script)
+	}
+	if err := eval.EvalScript(ctx, state, scriptFS{}, script); err != nil {
 		report(e.Err, err)
 		return 1
 	}
@@ -151,9 +151,53 @@ func runScript(ctx context.Context, e Env, o *configureOptions) int {
 }
 
 // report prints an error the way CMake does, without the Go error decoration.
+// messageSink prints message() output the way CMake does.
+//
+// STATUS and the plain form go to stdout unadorned; everything that is a
+// complaint goes to stderr under a banner naming the file, the line and the
+// command, with the text filled to CMake's column. The author and deprecation
+// warnings carry a footer saying who they are for, which is how a project
+// developer tells their own warnings from a user's.
+func messageSink(e Env, state *eval.State) func(mode, text string) {
+	return func(mode, text string) {
+		banner := func(kind string) string {
+			if state.File == "" {
+				return kind
+			}
+			at := fmt.Sprintf("%s at %s:%d", kind, eval.ReportPath(state.SourceDir, state.File), state.Line)
+			if state.Cmd != "" {
+				at += " (" + state.Cmd + ")"
+			}
+			return at
+		}
+		switch mode {
+		case "STATUS":
+			fmt.Fprintln(e.Out, "-- "+text)
+		case "ERROR":
+			fmt.Fprint(e.Err, eval.Diagnostic(banner("CMake Error"), text), "\n\n")
+		case "WARNING":
+			fmt.Fprint(e.Err, eval.Diagnostic(banner("CMake Warning"), text), "\n\n")
+		case "AUTHOR_WARNING":
+			fmt.Fprint(e.Err, eval.Diagnostic(banner("CMake Warning (author)"), text),
+				"This warning is for project developers.  Use -Wno-author to suppress it.\n\n")
+		case "DEPRECATION":
+			fmt.Fprint(e.Err, eval.Diagnostic(banner("CMake Warning (deprecated)"), text),
+				"This warning is for project developers.  Use -Wno-author or -Wno-deprecated\nto suppress it.\n\n")
+		case "POLICY":
+			fmt.Fprint(e.Err, eval.Diagnostic(banner("CMake Warning (policy)"), text),
+				"This warning is for project developers.  Use -Wno-author or -Wno-policy to\nsuppress it.\n\n")
+		default:
+			fmt.Fprintln(e.Out, text)
+		}
+	}
+}
+
 func report(w io.Writer, err error) {
 	if fe, ok := err.(*eval.FatalError); ok {
-		fmt.Fprintln(w, fe.Error())
+		// The two blank lines are CMake's: every diagnostic it writes is
+		// followed by them, and a log that has them everywhere but here reads
+		// as if something were cut off.
+		fmt.Fprintf(w, "%s\n\n\n", fe.Error())
 		return
 	}
 	fmt.Fprintf(w, "CMake Error: %v\n", err)

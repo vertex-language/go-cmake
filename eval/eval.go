@@ -48,13 +48,21 @@ type FatalError struct {
 	Msg  string
 	File string
 	Line int
+	// Command is the command that raised it, which CMake names in the banner:
+	// "CMake Error at CMakeLists.txt:3 (message)". Without it a reader has a
+	// line number and has to go and look at what is on that line.
+	Command string
 }
 
 func (e *FatalError) Error() string {
+	banner := "CMake Error"
 	if e.File != "" {
-		return fmt.Sprintf("CMake Error at %s:%d:\n  %s", e.File, e.Line, e.Msg)
+		banner = fmt.Sprintf("CMake Error at %s:%d", e.File, e.Line)
+		if e.Command != "" {
+			banner += " (" + e.Command + ")"
+		}
 	}
-	return "CMake Error:\n  " + e.Msg
+	return strings.TrimRight(Diagnostic(banner, e.Msg), "\n")
 }
 
 // commands is the built-in command table, keyed by lowercased name.
@@ -198,8 +206,9 @@ func (e *evaluator) evalCommand(ctx context.Context, c *ast.CommandInvocation) e
 // wrap attaches source position to a fatal error raised by a command.
 func (e *evaluator) wrap(c *ast.CommandInvocation, err error) error {
 	if fe, ok := err.(*FatalError); ok && fe.File == "" {
-		fe.File = e.state.File
+		fe.File = e.state.ErrorPath()
 		fe.Line = e.state.Line
+		fe.Command = e.state.Cmd
 	}
 	return err
 }
@@ -209,7 +218,7 @@ func (e *evaluator) errorAt(s ast.Stmt, msg string) error {
 	if c := invocation(s); c != nil {
 		e.state.setPosition(c)
 	}
-	return &FatalError{Msg: msg, File: e.state.File, Line: e.state.Line}
+	return &FatalError{Msg: msg, File: e.state.ErrorPath(), Line: e.state.Line, Command: e.state.Cmd}
 }
 
 // errorf reports an error that does not stop the configure run. CMake has two
@@ -225,7 +234,7 @@ func (e *evaluator) errorf(format string, a ...any) error {
 
 // fatalf builds a positioned fatal error from a format string.
 func (e *evaluator) fatalf(format string, a ...any) error {
-	return &FatalError{Msg: fmt.Sprintf(format, a...), File: e.state.File, Line: e.state.Line}
+	return &FatalError{Msg: fmt.Sprintf(format, a...), File: e.state.ErrorPath(), Line: e.state.Line, Command: e.state.Cmd}
 }
 
 // ----------------------------------------------------------------------------

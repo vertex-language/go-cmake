@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 // The Check modules are how a project asks about its compiler in practice.
@@ -102,7 +104,7 @@ func (e *evaluator) probeResult(ctx context.Context, name, description, source, 
 	// A FAIL_REGEX turns a compile that succeeded into a failure, which is how
 	// a check detects a warning that means the feature is not really there.
 	for _, expr := range opts.failRegex {
-		if re, err := compileCMakeRegex(expr); err == nil && re.MatchString(output) {
+		if re, err := regex.Compile(expr); err == nil && re.MatchString(output) {
 			passed = false
 		}
 	}

@@ -4,12 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/vertex-language/go-cmake/archive"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 func init() {
@@ -210,7 +211,7 @@ func fileStrings(e *evaluator, v []string) error {
 
 	limitCount, limitInput, limitOutput := -1, -1, -1
 	lengthMin, lengthMax := 0, -1
-	var regex *regexp.Regexp
+	var lineFilter *regex.Regexp
 	newlineConsume := false
 	for i := 3; i < len(v); i++ {
 		switch v[i] {
@@ -230,11 +231,11 @@ func fileStrings(e *evaluator, v []string) error {
 			lengthMax, _ = strconv.Atoi(next(v, i))
 			i++
 		case "REGEX":
-			re, err := compileCMakeRegex(next(v, i))
+			re, err := regex.Compile(next(v, i))
 			if err != nil {
-				return e.fatalf("file STRINGS: %v", err)
+				return e.fatalf("file STRINGS option REGEX value %q could not be compiled.", next(v, i))
 			}
-			regex = re
+			lineFilter = re
 			i++
 		case "NEWLINE_CONSUME":
 			newlineConsume = true
@@ -259,7 +260,7 @@ func fileStrings(e *evaluator, v []string) error {
 		if lengthMax >= 0 && len(s) > lengthMax {
 			s = s[:lengthMax]
 		}
-		if regex != nil && !regex.MatchString(s) {
+		if lineFilter != nil && !lineFilter.MatchString(s) {
 			return
 		}
 		if limitCount >= 0 && len(out) >= limitCount {

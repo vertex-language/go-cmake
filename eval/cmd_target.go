@@ -135,10 +135,9 @@ func (e *evaluator) checkTargetNameFree(command, name string) error {
 	if !exists {
 		return nil
 	}
-	return e.errorf("%s cannot create target %q because another target with the same\n"+
-		"  name already exists.  The existing target is %s created in\n"+
-		"  source directory\n  %q."+
-		"\n  See documentation for policy CMP0002 for more details.",
+	return e.errorf("%s cannot create target %q because another target with the same"+
+		" name already exists. The existing target is %s created in source"+
+		" directory %q. See documentation for policy CMP0002 for more details.",
 		command, name, describeTarget(existing), existing.SourceDir)
 }
 

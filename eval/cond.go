@@ -1,12 +1,14 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 // EvalCondition evaluates an if()/elseif()/while() condition.
@@ -28,7 +30,7 @@ func (s *State) EvalCondition(name string, args []Arg, fs FS) (bool, error) {
 		return false, err
 	}
 	if args, err = s.condBinary(args, fs); err != nil {
-		return false, err
+		return false, condArgs(name, original, err)
 	}
 	if args, err = s.condNot(args); err != nil {
 		return false, err
@@ -45,9 +47,19 @@ func (s *State) EvalCondition(name string, args []Arg, fs FS) (bool, error) {
 		// CMake echoes the arguments as they were written, not as they were
 		// reduced: the reduced form is an artefact of the evaluator and tells
 		// the reader nothing about the line they need to fix.
-		return false, fmt.Errorf("%s given arguments:\n\n    %s\n\n  Unknown arguments specified",
+		return false, fmt.Errorf("%s given arguments:\n  %s\nUnknown arguments specified",
 			name, quoteArgs(original))
 	}
+}
+
+// condArgs prefixes an error with the arguments the condition was given, which
+// is the only part of a bad if() a reader can act on.
+func condArgs(name string, original []Arg, err error) error {
+	var bad *condRegexError
+	if !errors.As(err, &bad) {
+		return err
+	}
+	return fmt.Errorf("%s given arguments:\n  %s\n%s", name, quoteArgs(original), err)
 }
 
 // quoteArgs renders a condition's arguments the way CMake echoes them back in
@@ -348,43 +360,23 @@ func (s *State) applyBinary(op string, lhs, rhs Arg, fs FS) (bool, error) {
 
 // matchRegex applies a MATCHES test and publishes CMAKE_MATCH_<n>.
 func (s *State) matchRegex(subject, pattern string) (bool, error) {
-	re, err := compileCMakeRegex(pattern)
+	re, err := regex.Compile(pattern)
 	if err != nil {
-		return false, fmt.Errorf("regular expression %q is invalid: %v", pattern, err)
+		return false, &condRegexError{pattern: pattern}
 	}
-	m := re.FindStringSubmatch(subject)
-	if m == nil {
-		s.SetVar("CMAKE_MATCH_COUNT", "0")
-		return false, nil
-	}
-	for i := 0; i < 10; i++ {
-		name := "CMAKE_MATCH_" + strconv.Itoa(i)
-		if i < len(m) {
-			s.SetVar(name, m[i])
-		} else {
-			s.UnsetVar(name)
-		}
-	}
-	s.SetVar("CMAKE_MATCH_COUNT", strconv.Itoa(len(m)-1))
-	return true, nil
+	m := re.Match(subject)
+	setMatchVars(s, m)
+	return m != nil, nil
 }
 
-var regexCache = map[string]*regexp.Regexp{}
+// condRegexError is a pattern if() could not compile. It is reported with the
+// condition's arguments echoed above it, the way CMake reports every other
+// complaint about an if(), so it has to travel up to where those are still
+// known rather than being formatted where it is raised.
+type condRegexError struct{ pattern string }
 
-// compileCMakeRegex compiles a CMake regular expression. CMake's engine is
-// POSIX-ERE-like; the differences that matter in practice are that it has no
-// non-greedy operators and treats an unmatched ')' literally, so patterns that
-// compile here are a superset of those CMake accepts.
-func compileCMakeRegex(pattern string) (*regexp.Regexp, error) {
-	if re, ok := regexCache[pattern]; ok {
-		return re, nil
-	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-	regexCache[pattern] = re
-	return re, nil
+func (e *condRegexError) Error() string {
+	return "Regular expression \"" + e.pattern + "\" cannot compile"
 }
 
 func normalizePath(p string) string {

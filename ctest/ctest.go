@@ -20,7 +20,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +28,8 @@ import (
 
 	"github.com/vertex-language/go-cmake/eval"
 	"github.com/vertex-language/go-cmake/run"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 // Config is a test run.
@@ -215,11 +216,11 @@ func testFromState(state *eval.State, entry eval.TestEntry) Test {
 
 // filter applies the four selection expressions.
 func filter(tests []Test, cfg Config) ([]Test, error) {
-	compile := func(expr, flag string) (*regexp.Regexp, error) {
+	compile := func(expr, flag string) (*regex.Regexp, error) {
 		if expr == "" {
 			return nil, nil
 		}
-		re, err := regexp.Compile(expr)
+		re, err := regex.Compile(expr)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %q is not a valid regular expression: %v", flag, expr, err)
 		}
@@ -261,7 +262,7 @@ func filter(tests []Test, cfg Config) ([]Test, error) {
 	return out, nil
 }
 
-func anyMatch(re *regexp.Regexp, values []string) bool {
+func anyMatch(re *regex.Regexp, values []string) bool {
 	for _, v := range values {
 		if re.MatchString(v) {
 			return true
@@ -437,7 +438,7 @@ func runOne(ctx context.Context, cfg Config, t Test) Result {
 }
 
 func matches(expr, text string) bool {
-	re, err := regexp.Compile(expr)
+	re, err := regex.Compile(expr)
 	if err != nil {
 		return false
 	}

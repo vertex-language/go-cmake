@@ -109,8 +109,8 @@ func EvalProject(ctx context.Context, state *State, filesystem FS) error {
 	e := &evaluator{state: state, fs: filesystem}
 	listFile := joinPath(state.SourceDir, "CMakeLists.txt")
 	if _, err := filesystem.Stat(listFile); err != nil {
-		return &FatalError{Msg: "The source directory\n\n  " + state.SourceDir +
-			"\n\ndoes not appear to contain CMakeLists.txt."}
+		return &FatalError{Msg: "The source directory\n  " + state.SourceDir +
+			"\ndoes not appear to contain CMakeLists.txt."}
 	}
 	err := e.evalFile(ctx, listFile)
 	if _, ok := err.(returnSignal); ok {

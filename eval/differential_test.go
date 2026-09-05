@@ -71,27 +71,37 @@ func runOurs(t *testing.T, dir, script string) string {
 	state.Runner = run.OS()
 	state.SetVar("CMAKE_COMMAND", cmakePath)
 	var sb strings.Builder
-	state.LogSink = func(mode, text string) {
-		switch mode {
-		case "":
-			sb.WriteString(text + "\n")
-		case "STATUS":
-			sb.WriteString("-- " + text + "\n")
-		case "AUTHOR_WARNING":
-			sb.WriteString("CMake Warning (author)\n  " + text + "\n")
-		case "DEPRECATION":
-			sb.WriteString("CMake Warning (deprecated)\n  " + text + "\n")
-		case "POLICY":
-			sb.WriteString("CMake Warning (policy)\n  " + text + "\n")
-		default:
-			sb.WriteString(mode + ": " + text + "\n")
-		}
-	}
+	state.LogSink = collectMessages(&sb)
 	err := eval.EvalScript(context.Background(), state, diskFS{}, path)
 	if err != nil {
 		sb.WriteString(err.Error() + "\n")
 	}
 	return normalise(sb.String())
+}
+
+// collectMessages is the message sink both harnesses use. It renders through
+// the same formatter the command line does, so what the tests compare is what
+// a user would see -- a sink that only wrote the text would hide every
+// difference in how a diagnostic is laid out.
+func collectMessages(sb *strings.Builder) func(mode, text string) {
+	return func(mode, text string) {
+		switch mode {
+		case "STATUS":
+			sb.WriteString("-- " + text + "\n")
+		case "AUTHOR_WARNING":
+			sb.WriteString(eval.Diagnostic("CMake Warning (author)", text))
+		case "DEPRECATION":
+			sb.WriteString(eval.Diagnostic("CMake Warning (deprecated)", text))
+		case "POLICY":
+			sb.WriteString(eval.Diagnostic("CMake Warning (policy)", text))
+		case "WARNING":
+			sb.WriteString(eval.Diagnostic("CMake Warning", text))
+		case "ERROR":
+			sb.WriteString(eval.Diagnostic("CMake Error", text))
+		default:
+			sb.WriteString(text + "\n")
+		}
+	}
 }
 
 // normalise strips the decoration that differs between the two front ends but
@@ -102,6 +112,16 @@ func normalise(s string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
 		line = strings.TrimRight(line, " \t")
 		if line == "" {
+			continue
+		}
+		// cmake's regex engine writes two lines of its own to stderr before the
+		// command reports the failure: "RegularExpression::compile(): <reason>."
+		// and "Error in compile.". That is the vendored C++ library talking, not
+		// a diagnostic, and a Go program naming a C++ class in its output would
+		// be a stranger thing than the difference. The reason itself is not lost
+		// -- the regex package carries it on the error -- so only the two lines
+		// are dropped.
+		if strings.HasPrefix(line, "RegularExpression::compile()") {
 			continue
 		}
 		if strings.HasPrefix(line, "CMake Error at ") || strings.HasPrefix(line, "CMake Error:") {

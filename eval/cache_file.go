@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -238,7 +239,10 @@ func compileGlob(pattern string) (matcher, error) {
 		}
 	}
 	b.WriteString("$")
-	return compileCMakeRegex(b.String())
+	// Compiled with Go's engine on purpose: this pattern was built here, so it
+	// is in Go's dialect already and has no business going through the
+	// translation that user-written CMake patterns need.
+	return regexp.Compile(b.String())
 }
 
 // matcher is the small part of a compiled regexp this file needs.

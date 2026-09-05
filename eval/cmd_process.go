@@ -120,7 +120,7 @@ func cmdExecuteProcess(ctx context.Context, e *evaluator, args []Arg) error {
 
 	var stdout, stderr bytes.Buffer
 	var codes []string
-	var last int
+	var lastCode int
 
 	// Commands are piped: each one's output becomes the next one's input, and
 	// only the last one's output reaches the caller.
@@ -135,6 +135,7 @@ func cmdExecuteProcess(ctx context.Context, e *evaluator, args []Arg) error {
 
 	for i, argv := range commands {
 		var out bytes.Buffer
+		last := i == len(commands)-1
 		cmd := run.Command{
 			Argv:   argv,
 			Dir:    workDir,
@@ -146,18 +147,32 @@ func cmdExecuteProcess(ctx context.Context, e *evaluator, args []Arg) error {
 		if mergeOutput {
 			cmd.Stderr = &out
 		}
+		// Only the last command's output belongs to the caller; the others feed
+		// the next command in the pipe and have to be held. Output the caller
+		// did not ask for is not held at all -- it goes straight out, so a
+		// command that prints progress prints it as it happens rather than into
+		// a buffer that is then discarded.
+		if last && outVar == "" && outputFile == "" {
+			cmd.Stdout = e.state.stdout()
+			if mergeOutput {
+				cmd.Stderr = cmd.Stdout
+			}
+		}
+		if last && !mergeOutput && errVar == "" && errorFile == "" {
+			cmd.Stderr = e.state.stderr()
+		}
 		code, err := e.state.Runner.Run(ctx, cmd)
 		if err != nil && code == 0 {
 			// A command that could not start at all reports its message where
 			// a caller checking RESULT_VARIABLE will see it.
 			codes = append(codes, err.Error())
-			last = -1
+			lastCode = -1
 			stderr.WriteString(err.Error())
 			break
 		}
 		codes = append(codes, strconv.Itoa(code))
-		last = code
-		if i == len(commands)-1 {
+		lastCode = code
+		if last {
 			stdout = out
 		} else {
 			pipeIn = bytes.NewReader(out.Bytes())
@@ -184,7 +199,7 @@ func cmdExecuteProcess(ctx context.Context, e *evaluator, args []Arg) error {
 		e.state.SetVar(errVar, errText)
 	}
 	if resVar != "" {
-		e.state.SetVar(resVar, strconv.Itoa(last))
+		e.state.SetVar(resVar, strconv.Itoa(lastCode))
 	}
 	if resultsVar != "" {
 		e.state.SetVar(resultsVar, JoinList(codes))

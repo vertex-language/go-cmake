@@ -51,20 +51,7 @@ func configureOurs(t *testing.T, source string) string {
 	state := eval.NewState(filepath.ToSlash(source), filepath.ToSlash(filepath.Join(source, "_ours")), os.Environ())
 	state.Runner = run.OS()
 	var sb strings.Builder
-	state.LogSink = func(mode, text string) {
-		switch mode {
-		case "":
-			sb.WriteString(text + "\n")
-		case "STATUS":
-			sb.WriteString("-- " + text + "\n")
-		case "AUTHOR_WARNING":
-			sb.WriteString("CMake Warning (author)\n  " + text + "\n")
-		case "ERROR":
-			sb.WriteString("CMake Error\n  " + text + "\n")
-		default:
-			sb.WriteString(mode + ": " + text + "\n")
-		}
-	}
+	state.LogSink = collectMessages(&sb)
 	if err := eval.EvalProject(context.Background(), state, diskFS{}); err != nil {
 		sb.WriteString(err.Error() + "\n")
 	}

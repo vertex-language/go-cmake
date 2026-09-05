@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 func init() {
@@ -253,9 +255,9 @@ func listFilter(e *evaluator, name string, items, rest []string) error {
 	if rest[1] != "REGEX" {
 		return e.fatalf("list FILTER expects REGEX, got %s", rest[1])
 	}
-	re, err := compileCMakeRegex(rest[2])
+	re, err := regex.Compile(rest[2])
 	if err != nil {
-		return e.fatalf("list FILTER: %v", err)
+		return e.fatalf("list sub-command FILTER, mode REGEX failed to compile regex %q.", rest[2])
 	}
 	var out []string
 	for _, it := range items {
@@ -347,9 +349,9 @@ func listTransform(e *evaluator, name string, items, rest []string) error {
 			if i+1 >= len(rest) {
 				return e.fatalf("list TRANSFORM REGEX requires a pattern")
 			}
-			re, err := compileCMakeRegex(rest[i+1])
+			re, err := regex.Compile(rest[i+1])
 			if err != nil {
-				return e.fatalf("list TRANSFORM REGEX: %v", err)
+				return e.fatalf("list sub-command TRANSFORM, action REGEX: Failed to compile regex %q.", rest[i+1])
 			}
 			for j, it := range items {
 				selected[j] = re.MatchString(it)
@@ -386,12 +388,15 @@ func listTransform(e *evaluator, name string, items, rest []string) error {
 		case "GENEX_STRIP":
 			out[j] = genexPattern.ReplaceAllString(it, "")
 		case "REPLACE":
-			re, err := compileCMakeRegex(operands[0])
+			re, err := regex.Compile(operands[0])
 			if err != nil {
-				return e.fatalf("list TRANSFORM REPLACE: %v", err)
+				return e.fatalf("list sub-command TRANSFORM, action REPLACE: Failed to compile regex %q.", operands[0])
 			}
-			repl, _ := cmakeReplacement(operands[1])
-			out[j] = re.ReplaceAllString(it, repl)
+			with, err := regex.ParseReplacement(operands[1])
+			if err != nil {
+				return e.fatalf("list sub-command TRANSFORM, action REPLACE: %v.", err)
+			}
+			out[j] = re.Replace(it, with)
 		}
 	}
 	e.state.SetVar(outVar, JoinList(out))

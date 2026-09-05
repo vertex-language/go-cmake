@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -11,6 +10,8 @@ import (
 	"github.com/vertex-language/go-cmake/eval"
 	"github.com/vertex-language/go-cmake/preset"
 	"github.com/vertex-language/go-cmake/run"
+
+	"github.com/vertex-language/go-cmake/regex"
 )
 
 // runConfigure runs the configure phase and, unless -N was given, generate.
@@ -122,9 +123,9 @@ func unsupported(state *eval.State) []string {
 // group; nothing shows the second, because printing them would suggest they
 // could be set.
 func printCache(e Env, o *configureOptions, state *eval.State) {
-	var match *regexp.Regexp
+	var match *regex.Regexp
 	if o.listRegex != "" {
-		re, err := regexp.Compile(o.listRegex)
+		re, err := regex.Compile(o.listRegex)
 		if err != nil {
 			fmt.Fprintf(e.Err, "CMake Error: %q is not a valid regular expression: %v\n", o.listRegex, err)
 			return

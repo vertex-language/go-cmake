@@ -343,8 +343,8 @@ func cmdFindPackage(ctx context.Context, e *evaluator, args []Arg) error {
 	e.state.SetVar(name+"_NOTFOUND_MESSAGE",
 		"Could not find a package configuration file provided by \""+name+"\"")
 	if required {
-		return e.fatalf("Could not find a package configuration file provided by %q\n"+
-			"  with any of the following names:\n\n    %sConfig.cmake\n    %s-config.cmake",
+		return e.fatalf("Could not find a package configuration file provided by %q"+
+			" with any of the following names:\n  %sConfig.cmake\n  %s-config.cmake",
 			name, name, strings.ToLower(name))
 	}
 	if !quiet {

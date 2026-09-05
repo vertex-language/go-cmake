@@ -90,13 +90,17 @@ func invocation(s ast.Stmt) *ast.CommandInvocation {
 type ifClause struct {
 	Cond []ast.Arg
 	Body []ast.Stmt
+	// At is the if or elseif itself, which a diagnostic about the condition
+	// has to name: control flow does not go through the command table, so
+	// nothing else records where it was written.
+	At *ast.CommandInvocation
 }
 
 // splitIf divides an if block into its clauses. stmts[open] is the if and
 // stmts[end] is the endif.
 func splitIf(stmts []ast.Stmt, open, end int) ([]ifClause, error) {
 	var clauses []ifClause
-	cur := ifClause{Cond: invocation(stmts[open]).Args}
+	cur := ifClause{Cond: invocation(stmts[open]).Args, At: invocation(stmts[open])}
 	depth := 0
 	bodyStart := open + 1
 	for i := open + 1; i < end; i++ {
@@ -116,7 +120,7 @@ func splitIf(stmts []ast.Stmt, open, end int) ([]ifClause, error) {
 		case "elseif":
 			cur.Body = stmts[bodyStart:i]
 			clauses = append(clauses, cur)
-			cur = ifClause{Cond: invocation(stmts[i]).Args}
+			cur = ifClause{Cond: invocation(stmts[i]).Args, At: invocation(stmts[i])}
 			bodyStart = i + 1
 		case "else":
 			cur.Body = stmts[bodyStart:i]
@@ -143,6 +147,9 @@ func (e *evaluator) evalIf(ctx context.Context, stmts []ast.Stmt, open, end int)
 		name := "if"
 		if i > 0 {
 			name = "elseif"
+		}
+		if c.At != nil {
+			e.state.setPosition(c.At)
 		}
 		ok, err := e.state.EvalCondition(name, e.expand(c.Cond), e.fs)
 		if err != nil {
