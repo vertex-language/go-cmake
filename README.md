@@ -1,0 +1,387 @@
+# go-cmake
+
+`cmake` is an implementation of CMake as a Go package, with no dependency on
+anything but the standard library.
+
+It reads a `CMakeLists.txt` tree, evaluates the CMake language, resolves the
+target graph, writes a `build.ninja`, and drives that build to completion — all
+in one process. Building a C or C++ project with it requires a compiler and
+nothing else: no `cmake` binary, no `ninja` binary, and on Windows no developer
+command prompt.
+
+```go
+import "github.com/vertex-language/go-cmake"
+
+c, _ := cmake.New(cmake.Config{
+    Source:    ".",
+    Binary:    "_build",
+    Generator: "Ninja",
+    Vars:      map[string]string{"CMAKE_BUILD_TYPE": "Release"},
+    Jobs:      8,
+    FS:        cmake.RealFS(""),
+    Runner:    cmake.RealRunner(),
+})
+res, err := c.Build(ctx)
+```
+
+Every external effect is an injected field: the filesystem, the process runner,
+the environment, and the output streams. That is what makes a dry run, a test
+against an in-memory filesystem, or a fully in-process build possible.
+
+---
+
+- [Status](#status)
+- [The three phases](#the-three-phases)
+- [The pipeline](#the-pipeline)
+- [The two seams](#the-two-seams)
+- [Every effect is a field](#every-effect-is-a-field)
+- [Toolchain discovery](#toolchain-discovery)
+- [The command line](#the-command-line)
+- [How it is tested](#how-it-is-tested)
+- [What is not implemented](#what-is-not-implemented)
+- [What this package does not own](#what-this-package-does-not-own)
+
+---
+
+## Install
+
+As a library:
+
+```console
+$ go get github.com/vertex-language/go-cmake
+```
+
+As a program:
+
+```console
+$ go install github.com/vertex-language/go-cmake/cmd/cmake@latest
+```
+
+---
+
+## Status
+
+This is a working implementation of the parts of CMake that a C or C++ project
+actually uses, and an explicit non-implementation of the rest. The table says
+where each package stands; the coverage figures are `go test -cover`.
+
+| Package | State | Coverage |
+|---|---|---|
+| [`token`](token/) | complete | 93% |
+| [`scanner`](scanner/) | complete | 79% |
+| [`ast`](ast/) | complete | — |
+| [`parser`](parser/) | complete | 76% |
+| [`expr`](expr/) | complete | 64% |
+| [`eval`](eval/) | 93 of 132 documented commands | 55% |
+| [`generate`](generate/) | usage-requirement closure, generator expressions, Ninja output | 50% |
+| [`toolchain`](toolchain/) | GCC, Clang, MSVC discovery | — |
+| [`ninja`](ninja/) | parser, scheduler, build log | 77% |
+| [`build`](build/) | `--build`, `--install` | — |
+| [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 39% |
+| [`cmake`](.) | the facade | 51% |
+
+**What demonstrably works.** The end-to-end tests in
+[`endtoend_test.go`](endtoend_test.go) compile, link, and *run* real programs
+covering executables, static libraries, object libraries, subdirectory trees,
+transitive usage requirements, `configure_file`, custom commands, generator
+expressions, incremental rebuilds, and header-change detection.
+
+---
+
+## The three phases
+
+CMake divides every build into three phases. Each is a distinct, independently
+observable stage here.
+
+| Phase | What happens |
+|---|---|
+| **Configure** | The CMake language is read and evaluated. Targets, sources, dependencies, compile flags, tests, and install rules are declared. Nothing is compiled. |
+| **Generate** | The configured state is resolved into a build graph — usage requirements propagated, generator expressions evaluated, link order computed — and written as `build.ninja`. Nothing is compiled. |
+| **Build** | The build graph is scheduled and executed. |
+
+The boundary between configure and generate is a value you can hold. The
+boundary between generate and build is a file on disk.
+
+---
+
+## The pipeline
+
+Each stage is a sub-package depending only on the ones above it.
+
+```
+  CMakeLists.txt bytes
+        |
+   token|  token kinds and Pos: the vocabulary every later package shares
+        |
+ scanner|  bytes -> []Token: bracket syntax [[...]], quoted strings,
+        |  unquoted args, bracket comments, line comments
+        |
+     ast|  node types: File, CommandInvocation, and the three Argument kinds
+        |
+  parser|  []Token -> *ast.File: the command-invocation grammar and a printer
+        |  that reconstructs the source byte for byte
+        |
+    expr|  argument expansion: ${VAR}, nested ${${VAR}}, $ENV{}, $CACHE{},
+        |  escapes, and the semicolon-list duality
+        |
+    eval|  variables, the cache, macros, functions, conditionals, loops,
+        |  include, add_subdirectory, policies, and 93 built-in commands
+        |        <- configure phase ends here, in an eval.State
+        +
+toolchain|  which compiler, which archiver, which flag convention, and on
+        |  Windows where Visual Studio put them
+        |
+generate|  usage-requirement closure, link order, generator expressions,
+        |  and the build.ninja
+        |        <- generate phase ends here
+        +
+   ninja|  the build file parser, the scheduler that decides what not to run,
+        |  and the build log that makes that decision correct
+        |
+   build|  cmake --build and cmake --install
+        |        <- build phase: the only stage that changes anything
+        v
+     the files
+```
+
+The CMake language they implement is specified in
+[docs/grammar.md](docs/grammar.md) — productions rather than prose, because the
+CMake documentation describes behaviour but publishes no grammar a parser can
+be written against.
+
+---
+
+## The two seams
+
+### Seam 1: after configure
+
+The configured state is a value you can inspect before generating anything:
+
+```go
+res, _ := c.Configure(ctx)
+
+fmt.Println(res.State.GetVar("CMAKE_PROJECT_NAME"))
+fmt.Println(res.TargetNames)          // in declaration order
+for _, name := range res.TargetNames {
+    t, _ := res.State.Target(name)
+    fmt.Println(t.Name, t.Type, t.Sources)
+}
+for _, rule := range res.State.InstallRules { ... }
+for _, test := range res.State.Tests      { ... }
+```
+
+Stopping after configure is a supported use, not a debugging mode. A linter
+wants `Configure`. A tool that only needs to know what a project declares is
+done there, and needs no compiler at all.
+
+### Seam 2: generator expressions
+
+`$<TARGET_FILE:foo>`, `$<CONFIG:Release>`, `$<BUILD_INTERFACE:...>` are
+deliberately opaque during configure. They cannot be answered then: `foo` may
+not be declared yet, and its output path is a decision the *generator* makes.
+So configure keeps them verbatim and [`generate`](generate/) resolves them
+once the full graph and the toolchain are both known.
+
+Variable references *inside* a generator expression are still expanded at
+configure time — `$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>` reaches
+the generator with the path already substituted. Only the `$<...>` structure
+survives.
+
+---
+
+## Every effect is a field
+
+The package holds no global state and opens nothing it was not given.
+
+```go
+type Config struct {
+    Source    string            // the source directory (contains CMakeLists.txt)
+    Binary    string            // the build directory
+    Generator string            // "Ninja"
+    Toolchain string            // -DCMAKE_TOOLCHAIN_FILE
+    Preset    string            // --preset name
+    Vars      map[string]string // -D assignments
+    Env       []string          // defaults to os.Environ()
+    Jobs      int               // --parallel
+    Flags     Flags             // --fresh --warn-uninitialized --log-level ...
+
+    FS     FS
+    Runner Runner
+    Out    io.Writer
+    Err    io.Writer
+}
+```
+
+`FS` is the package's only contact with the disk. `Runner` is how a caller
+takes over process execution without taking over CMake:
+
+```go
+type Runner interface {
+    Run(ctx context.Context, cmd Command) error
+}
+
+type Command struct {
+    Argv   []string
+    Line   string    // set when the command is a shell command line
+    Dir    string
+    Env    []string
+    Stdin  io.Reader
+    Stdout io.Writer
+    Stderr io.Writer
+}
+```
+
+`Line` exists for a specific reason. A build file's commands are shell syntax,
+not argument vectors — they may contain `&&`, redirection, or quoting that only
+a shell resolves. And on Windows there is no argument vector that survives the
+trip: `cmd.exe` does not parse its arguments the way Go quotes them, so a
+compiler path containing a space (which the default Visual Studio location has)
+arrives mangled. A `Runner` that executes commands should prefer `Line`; one
+that only inspects or logs them can read `Argv`.
+
+The default `Runner` forks a subprocess. A `Runner` of your own can intercept
+compiler invocations, cache object files, record inputs and outputs, or redirect
+output to a structured log. A test `Runner` appends to a slice.
+
+---
+
+## Toolchain discovery
+
+CMake detects compilers inside `project()`, by writing a small program and
+compiling it. That is a build-phase effect happening during configure, and it is
+why a CMake configure needs a working compiler even to answer a question about a
+project's structure.
+
+This package keeps discovery separate, in [`toolchain`](toolchain/), and seeds
+the results into the cache before evaluation begins. A `CMakeLists.txt` that
+reads `CMAKE_C_COMPILER_ID` sees exactly what the generator will use.
+
+Discovery looks at `CC` and `CXX` first, then the conventional names on `PATH`.
+On Windows, when nothing is on `PATH` — which is the normal state, because
+Visual Studio expects `vcvarsall.bat` to have been run first — it locates the
+Visual C++ toolchain and the Windows SDK where they install, and composes the
+include and library directories itself. Those directories are then emitted as
+explicit flags in the generated build file rather than left to an environment
+the build may not have.
+
+---
+
+## The command line
+
+[`cli`](cli/) parses arguments into a `Config` and runs the phase asked for.
+Every effect reaches it through `Env`, so the whole command line is testable
+without a process.
+
+```go
+type Env struct {
+    Args []string
+    Dir  string
+    Env  []string
+    In   io.Reader
+    Out  io.Writer
+    Err  io.Writer
+}
+
+func Main(ctx context.Context, e Env) int
+```
+
+| Mode | |
+|---|---|
+| configure | `-S` `-B` `-G` `-D` `-U` `--preset` `--toolchain` `--fresh` `--log-level` `-j` |
+| build | `cmake --build <dir> [--target ...] [--config ...] [-j N] [--clean-first] [--verbose]` |
+| install | `cmake --install <dir> [--prefix ...] [--component ...] [--strip]` |
+| script | `cmake -P <script.cmake> [args...]` — the language with no project and no cache |
+| tool | `cmake -E <command>` — the portable shell that generated build rules call |
+
+Flags that change only diagnostics (`--trace`, `-Wdev`, `--debug-find`, and
+friends) are accepted and ignored. An unrecognised flag is an error rather than
+a silent no-op, because a misspelled flag that is quietly discarded produces a
+build that is subtly not the one asked for.
+
+---
+
+## How it is tested
+
+Two kinds of test, because they answer different questions.
+
+**Differential tests** (`eval/differential_test.go`, `eval/differential2_test.go`,
+`eval/project_test.go`) run the same CMake script through this implementation
+and through the `cmake` binary installed on the host, and require the output to
+match exactly. Reading the documentation tells you what CMake is supposed to do;
+running it tells you what it does, and where the two differ, the binary is the
+specification. Every one of these started as a guess that turned out to be
+wrong — that `unset()` clears the cache entry (it does not), that `if(NOT NOT
+V)` is a double negation (it is an error), that `" 5 "` is a number (it is not,
+though `" 5 " LESS 10` is true), that a directory's compile definitions are
+copied into its targets (they are not, unlike its include directories). If no
+`cmake` is installed, these skip.
+
+**End-to-end tests** (`endtoend_test.go`) compile, link, and run real programs.
+They are the only tests that can catch a build file that parses, schedules, and
+produces a binary that does not work.
+
+```console
+$ go test ./...
+```
+
+---
+
+## What is not implemented
+
+Stated plainly, because a build system that quietly does nothing is worse than
+one that says it cannot.
+
+1. **Generators other than Ninja.** `Unix Makefiles`, `Visual Studio`, and
+   `Xcode` are refused with a message, not approximated.
+2. **`try_compile` and `try_run`.** They report failure rather than a false
+   success: a project that is told its compiler supports a feature it does not
+   fails later, more confusingly.
+3. **`FetchContent` and `ExternalProject`.** Both need network access.
+   `file(DOWNLOAD)` and `file(UPLOAD)` are refused for the same reason.
+4. **`install()` beyond recording the rules.** The rules are parsed and kept in
+   `State.InstallRules`; the copying is not wired to them yet.
+5. **CTest and CPack.** `add_test` and `enable_testing` record what a project
+   declares; no test driver runs it. The `ctest_*` script commands are absent.
+6. **39 of 132 documented commands**, of which 13 are `ctest_*` and most of the
+   rest are CMake 2.x spellings kept alive for compatibility (`exec_program`,
+   `install_files`, `subdirs`, `qt_wrap_cpp`, `use_mangled_mesa`).
+7. **Multi-config generators.** One configuration per build directory.
+8. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
+   scanning.**
+9. **The regex dialect.** CMake uses its own engine; this uses Go's RE2. Every
+   pattern CMake accepts, RE2 accepts, but RE2 also accepts patterns CMake would
+   reject — so a bad regex may work here and fail under real CMake.
+10. **`.ninja_deps` binary compatibility.** The dependency log is written as
+    text, and the build log's command field holds this implementation's hash
+    rather than upstream ninja's. Sharing a build directory with real `ninja`
+    costs one extra rebuild, never a stale object.
+
+---
+
+## What this package does not own
+
+[`build`](build/) drives **commands**. A command is an opaque subprocess whose
+inputs and outputs are not declared.
+
+A build system integrating with this package may run **actions** — a command
+with declared inputs, outputs, content hashes, and a cache key — which are
+remotely cacheable and distributable. To bridge that gap, callers substitute a
+`Runner` that recognises compiler invocations and turns them into cacheable
+actions, delegating everything else.
+
+Nothing about remote execution, content-addressed caching, distributed
+scheduling, or compiler wrapper selection appears here. All such integrations
+attach through the `Runner` interface.
+
+---
+
+## The package name
+
+The module is `github.com/vertex-language/go-cmake`; the Go package name is
+`cmake`. Importing it shadows no Go builtin.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).

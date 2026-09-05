@@ -1,0 +1,20 @@
+# Built binaries
+cmake
+cmake.exe
+/cmd/cmake/cmake
+/cmd/cmake/cmake.exe
+
+# Test and coverage output
+*.test
+*.test.exe
+coverage.out
+*.prof
+
+# Reference copies of CMake's own documentation, used while implementing.
+# They are Kitware's text, not this project's, and each is one command away
+# (see docs/README.md), so they are not redistributed here.
+docs/cmake-*.txt
+
+# Build trees left behind by manual runs
+/_build/
+/build/CMakeFiles/
