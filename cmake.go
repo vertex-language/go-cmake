@@ -376,6 +376,25 @@ func (c *CMake) generateFrom(ctx context.Context, state *eval.State) (*GenerateR
 		return nil, err
 	}
 
+	// The tests go out per directory, so that running the tests from a
+	// subdirectory of the build tree runs that subtree's and nothing else.
+	tests := &generate.CTest{
+		State:     state,
+		Graph:     graph,
+		Toolchain: c.toolchain(state),
+		SourceDir: state.SourceDir,
+		BinaryDir: state.BinaryDir,
+	}
+	err = tests.WriteAll(func(path string, content []byte) error {
+		if err := c.cfg.FS.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return err
+		}
+		return c.cfg.FS.WriteFile(path, content, 0644)
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &GenerateResult{
 		BuildFile: buildFile,
 		Generator: gen,

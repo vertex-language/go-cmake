@@ -12,6 +12,7 @@ func init() {
 	register("include", cmdInclude)
 	register("include_guard", cmdIncludeGuard)
 	register("add_subdirectory", cmdAddSubdirectory)
+	register("subdirs", cmdSubdirs)
 	register("cmake_language", cmdCMakeLanguage)
 }
 
@@ -194,5 +195,51 @@ func (e *evaluator) deferCall(vals []string) error {
 	}
 	d := e.state.Dir()
 	d.Deferred = append(d.Deferred, append([]string{}, rest...))
+	return nil
+}
+
+// cmdSubdirs is the CMake 2.x spelling of add_subdirectory, and the command a
+// CTestTestfile.cmake uses to chain to the next directory's tests.
+//
+// Those are two different meanings for one name, and which applies depends on
+// what is being read rather than on the arguments: cmake and ctest are separate
+// programs that interpret the same file syntax differently. The file being
+// evaluated decides, because that is the only thing that distinguishes them.
+func cmdSubdirs(ctx context.Context, e *evaluator, args []Arg) error {
+	if strings.HasSuffix(e.state.GetVar("CMAKE_CURRENT_LIST_FILE"), TestFileName) {
+		return e.subdirTestFiles(ctx, Args(args))
+	}
+	// PREORDER and EXCLUDE_FROM_ALL are accepted for compatibility; ordering is
+	// already preorder here and exclusion is a target property.
+	for _, dir := range Args(args) {
+		if dir == "PREORDER" || dir == "EXCLUDE_FROM_ALL" {
+			continue
+		}
+		if err := cmdAddSubdirectory(ctx, e, Strings(dir)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestFileName is the per-directory file listing a directory's tests.
+const TestFileName = "CTestTestfile.cmake"
+
+// subdirTestFiles chains to each named subdirectory's test file. A missing one
+// is not an error: a subdirectory that declared no tests has no file, and a
+// test run must not fail because part of the tree is untested.
+func (e *evaluator) subdirTestFiles(ctx context.Context, dirs []string) error {
+	base := dirOf(e.state.GetVar("CMAKE_CURRENT_LIST_FILE"))
+	for _, dir := range dirs {
+		path := joinPath(base, dir, TestFileName)
+		if fi, err := e.fs.Stat(path); err != nil || fi.IsDir() {
+			continue
+		}
+		if err := e.evalFile(ctx, path); err != nil {
+			if _, isReturn := err.(returnSignal); !isReturn {
+				return err
+			}
+		}
+	}
 	return nil
 }

@@ -666,7 +666,7 @@ func cmdAddTest(_ context.Context, e *evaluator, args []Arg) error {
 		if len(v) < 2 {
 			return e.fatalf("add_test requires a name after NAME")
 		}
-		entry := TestEntry{Name: v[1], WorkDir: e.state.Dir().Binary}
+		entry := TestEntry{Name: v[1], WorkDir: e.state.Dir().Binary, BinaryDir: e.state.Dir().Binary}
 		keyword := ""
 		for _, a := range v[2:] {
 			switch a {
@@ -687,9 +687,10 @@ func cmdAddTest(_ context.Context, e *evaluator, args []Arg) error {
 		return nil
 	}
 	e.state.Tests = append(e.state.Tests, TestEntry{
-		Name:    v[0],
-		Command: v[1:],
-		WorkDir: e.state.Dir().Binary,
+		Name:      v[0],
+		Command:   v[1:],
+		WorkDir:   e.state.Dir().Binary,
+		BinaryDir: e.state.Dir().Binary,
 	})
 	return nil
 }

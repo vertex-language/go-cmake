@@ -189,9 +189,18 @@ func (d *Directory) inherit(p *Directory) {
 
 // TestEntry holds a registered test.
 type TestEntry struct {
-	Name           string
-	Command        []string
-	WorkDir        string
+	Name    string
+	Command []string
+
+	// WorkDir is where the test runs, which WORKING_DIRECTORY may move away
+	// from the directory that declared it.
+	WorkDir string
+
+	// BinaryDir is the directory that declared the test. It decides which
+	// generated test file the test is written into, and so which subtree a
+	// `ctest` run from a subdirectory will find it in.
+	BinaryDir string
+
 	Configurations []string
 }
 
