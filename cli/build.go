@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	cmake "github.com/vertex-language/go-cmake"
 	"github.com/vertex-language/go-cmake/build"
 	"github.com/vertex-language/go-cmake/preset"
 	"github.com/vertex-language/go-cmake/run"
@@ -172,34 +173,73 @@ func listBuildPresets(e Env, kind string) int {
 	return listPresets(e, o)
 }
 
-// runInstall reports that installing is not implemented.
-//
-// install() rules are collected during configure and readable from the
-// configure state, but nothing writes them into the build tree, so there is
-// nothing here to act on. The options are still parsed, so that a wrong one is
-// reported as a wrong option rather than swallowed by a blanket refusal.
-func runInstall(_ context.Context, e Env, args []string) int {
+// runInstall installs a build tree by running the script generate wrote into it.
+func runInstall(ctx context.Context, e Env, args []string) int {
+	var opts cmake.InstallOptions
+	verbose := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "--prefix", arg == "--component", arg == "--config",
-			arg == "--default-directory-permissions":
-			if _, ok := valueFor(&i, args, arg); !ok {
+		case arg == "--prefix" || strings.HasPrefix(arg, "--prefix="):
+			v, ok := attachedOrNext(&i, args, arg, "--prefix")
+			if !ok {
 				return missingValue(e, arg)
 			}
-		case strings.HasPrefix(arg, "--prefix="), strings.HasPrefix(arg, "--component="),
-			strings.HasPrefix(arg, "--config="),
+			opts.Prefix = v
+		case arg == "--component" || strings.HasPrefix(arg, "--component="):
+			v, ok := attachedOrNext(&i, args, arg, "--component")
+			if !ok {
+				return missingValue(e, arg)
+			}
+			opts.Component = v
+		case arg == "--config" || strings.HasPrefix(arg, "--config="):
+			v, ok := attachedOrNext(&i, args, arg, "--config")
+			if !ok {
+				return missingValue(e, arg)
+			}
+			opts.Config = v
+		case arg == "--default-directory-permissions" ||
 			strings.HasPrefix(arg, "--default-directory-permissions="):
-		case arg == "--strip", arg == "-v", arg == "--verbose":
+			if _, ok := attachedOrNext(&i, args, arg, "--default-directory-permissions"); !ok {
+				return missingValue(e, arg)
+			}
+			// Permissions are not applied by this implementation.
+		case arg == "--strip":
+			// Stripping is a link-time concern this implementation does not do.
+		case arg == "-v" || arg == "--verbose":
+			verbose = true
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(e.Err, "CMake Error: unknown --install option %q\n", arg)
 			return 1
+		default:
+			if opts.BinaryDir == "" {
+				opts.BinaryDir = arg
+			}
 		}
 	}
-	fmt.Fprintln(e.Err, "CMake Error: --install is not implemented by this cmake.")
-	fmt.Fprintln(e.Err, "  install() rules are recorded during configure and can be read from the")
-	fmt.Fprintln(e.Err, "  configure state, but they are not written into the build tree.")
-	return 1
+	if opts.BinaryDir == "" {
+		fmt.Fprintln(e.Err, "CMake Error: --install requires a build directory")
+		return 1
+	}
+	_ = verbose
+
+	c, err := cmake.New(cmake.Config{
+		Binary: opts.BinaryDir,
+		Env:    e.Env,
+		FS:     cmake.RealFS(e.Dir),
+		Runner: run.OS(),
+		Out:    e.Out,
+		Err:    e.Err,
+	})
+	if err != nil {
+		fmt.Fprintf(e.Err, "CMake Error: %v\n", err)
+		return 1
+	}
+	if err := c.Install(ctx, opts); err != nil {
+		report(e.Err, err)
+		return 1
+	}
+	return 0
 }
 
 // valueFor takes the argument after a flag, advancing the index.

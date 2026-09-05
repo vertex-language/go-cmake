@@ -465,18 +465,54 @@ func dedupeSorted(in []string) []string {
 	return out
 }
 
+// fileCopy implements file(COPY) and file(INSTALL).
+//
+// They differ in three ways, all of which matter to a generated install script:
+// INSTALL reports each file it writes, records it in the manifest, and treats a
+// missing source as an error only when OPTIONAL was not given. COPY is silent.
+//
+// The arguments are keyword-driven rather than positional, because the form a
+// generated script uses puts DESTINATION first:
+//
+//	file(INSTALL DESTINATION "/prefix/bin" TYPE EXECUTABLE FILES "/build/app")
 func fileCopy(e *evaluator, v []string) error {
+	installing := v[0] == "INSTALL"
+
 	var files []string
-	dest := ""
-	i := 1
-	for ; i < len(v); i++ {
-		if v[i] == "DESTINATION" {
-			dest = next(v, i)
-			i++
-			break
+	dest, rename := "", ""
+	optional := false
+	keyword := "FILES"
+	for i := 1; i < len(v); i++ {
+		switch v[i] {
+		case "DESTINATION", "TYPE", "RENAME", "FILE_PERMISSIONS", "DIRECTORY_PERMISSIONS",
+			"PATTERN", "REGEX", "FILES", "PERMISSIONS":
+			keyword = v[i]
+			continue
+		case "OPTIONAL":
+			optional = true
+			continue
+		case "NO_SOURCE_PERMISSIONS", "USE_SOURCE_PERMISSIONS", "FILES_MATCHING",
+			"EXCLUDE", "FOLLOW_SYMLINK_CHAIN", "MESSAGE_NEVER", "MESSAGE_LAZY":
+			continue
 		}
-		files = append(files, v[i])
+		switch keyword {
+		case "FILES":
+			files = append(files, v[i])
+		case "DESTINATION":
+			dest = v[i]
+			keyword = ""
+		case "RENAME":
+			rename = v[i]
+			keyword = ""
+		case "TYPE":
+			// The type decides permissions, which this implementation does not
+			// set; it is consumed so that it is not read as a file name.
+			keyword = ""
+		default:
+			// A value belonging to a keyword whose effect is not implemented.
+		}
 	}
+
 	if dest == "" {
 		return e.fatalf("file %s requires a DESTINATION", v[0])
 	}
@@ -484,26 +520,102 @@ func fileCopy(e *evaluator, v []string) error {
 	if err := e.fs.MkdirAll(destDir); err != nil {
 		return e.fatalf("file %s could not create %s: %v", v[0], dest, err)
 	}
+
 	for _, f := range files {
 		src := e.state.absPath(f)
 		fi, err := e.fs.Stat(src)
 		if err != nil {
+			if optional {
+				continue
+			}
 			return e.fatalf("file %s cannot find %s", v[0], f)
 		}
+		name := BaseName(src)
+		if rename != "" {
+			name = rename
+		}
+		target := joinPath(destDir, name)
 		if fi.IsDir() {
-			// Directory copies are not walked here; a project that needs one
-			// is better served by install(DIRECTORY).
+			if err := e.copyDirInto(v[0], src, target, installing); err != nil {
+				return err
+			}
 			continue
 		}
-		data, err := e.fs.ReadFile(src)
-		if err != nil {
-			return e.fatalf("file %s cannot read %s", v[0], f)
-		}
-		if err := e.fs.WriteFile(joinPath(destDir, BaseName(src)), data); err != nil {
-			return e.fatalf("file %s cannot write into %s: %v", v[0], dest, err)
+		if err := e.installOne(v[0], src, target, installing); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// installOne copies one file and, when installing, says so.
+func (e *evaluator) installOne(command, src, target string, installing bool) error {
+	data, err := e.fs.ReadFile(src)
+	if err != nil {
+		return e.fatalf("file %s cannot read %s", command, src)
+	}
+	if installing {
+		// An unchanged file is reported as up to date rather than rewritten, so
+		// that a second install does not restamp every file and make everything
+		// downstream look new.
+		if existing, err := e.fs.ReadFile(target); err == nil && string(existing) == string(data) {
+			e.state.log("STATUS", "Up-to-date: "+target)
+			e.recordInstalled(target)
+			return nil
+		}
+		e.state.log("STATUS", "Installing: "+target)
+	}
+	if err := e.fs.MkdirAll(dirOf(target)); err != nil {
+		return e.fatalf("file %s could not create %s: %v", command, dirOf(target), err)
+	}
+	if err := e.fs.WriteFile(target, data); err != nil {
+		return e.fatalf("file %s cannot write %s: %v", command, target, err)
+	}
+	if installing {
+		e.recordInstalled(target)
+	}
+	return nil
+}
+
+// copyDirInto copies a directory tree, which install(DIRECTORY) needs and
+// file(COPY) of a directory implies.
+func (e *evaluator) copyDirInto(command, src, target string, installing bool) error {
+	entries, err := e.fs.Glob(src + "/*")
+	if err != nil {
+		return e.fatalf("file %s cannot read %s: %v", command, src, err)
+	}
+	if err := e.fs.MkdirAll(target); err != nil {
+		return e.fatalf("file %s could not create %s: %v", command, target, err)
+	}
+	for _, entry := range entries {
+		fi, err := e.fs.Stat(entry)
+		if err != nil {
+			continue
+		}
+		child := joinPath(target, BaseName(entry))
+		if fi.IsDir() {
+			if err := e.copyDirInto(command, slashPath(entry), child, installing); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := e.installOne(command, slashPath(entry), child, installing); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recordInstalled appends to the manifest variable the generated install script
+// writes out at the end, which is what tells a packager what was produced.
+func (e *evaluator) recordInstalled(target string) {
+	const manifest = "CMAKE_INSTALL_MANIFEST_FILES"
+	existing := e.state.GetVar(manifest)
+	if existing == "" {
+		e.state.Root.Set(manifest, target)
+		return
+	}
+	e.state.Root.Set(manifest, existing+";"+target)
 }
 
 func fileGenerate(e *evaluator, v []string) error {

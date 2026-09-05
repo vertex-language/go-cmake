@@ -214,19 +214,7 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 
 	state := eval.NewState(filepath.ToSlash(source), filepath.ToSlash(binary), c.cfg.Env)
 	state.Runner = c.cfg.Runner
-	if c.cfg.Out != nil {
-		out := c.cfg.Out
-		state.LogSink = func(mode, text string) {
-			switch mode {
-			case "":
-				fmt.Fprintln(out, text)
-			case "STATUS":
-				fmt.Fprintln(out, "-- "+text)
-			default:
-				fmt.Fprintf(out, "%s: %s\n", mode, text)
-			}
-		}
-	}
+	state.LogSink = c.logSink()
 	// A -D assignment wins over a remembered value, so it goes in first and
 	// the loaded cache fills in only what the command line did not mention.
 	for k, v := range c.cfg.Vars {
@@ -306,6 +294,25 @@ func (c *CMake) saveCache(state *eval.State, binary string) error {
 	return c.cfg.FS.WriteFile(binary+"/"+cacheFileName, buf.Bytes(), 0644)
 }
 
+// logSink renders message() output the way CMake prints it. A nil Out means the
+// caller wants silence, which is different from wanting the default.
+func (c *CMake) logSink() func(mode, text string) {
+	if c.cfg.Out == nil {
+		return func(string, string) {}
+	}
+	out := c.cfg.Out
+	return func(mode, text string) {
+		switch mode {
+		case "":
+			fmt.Fprintln(out, text)
+		case "STATUS":
+			fmt.Fprintln(out, "-- "+text)
+		default:
+			fmt.Fprintf(out, "%s: %s\n", mode, text)
+		}
+	}
+}
+
 // Generate runs the generate phase: it resolves each target's transitive build
 // settings and writes the chosen generator's build files.
 func (c *CMake) Generate(ctx context.Context) (*GenerateResult, error) {
@@ -350,6 +357,22 @@ func (c *CMake) generateFrom(ctx context.Context, state *eval.State) (*GenerateR
 		return nil, err
 	}
 	if err := c.cfg.FS.WriteFile(buildFile, buf.Bytes(), 0644); err != nil {
+		return nil, err
+	}
+
+	// The install rules become a script rather than an action, so that the
+	// prefix and component can be chosen when the install runs rather than now.
+	installer := &generate.Install{
+		Graph:     graph,
+		Toolchain: c.toolchain(state),
+		SourceDir: state.SourceDir,
+		BinaryDir: state.BinaryDir,
+	}
+	var script bytes.Buffer
+	if err := installer.Write(&script); err != nil {
+		return nil, err
+	}
+	if err := c.cfg.FS.WriteFile(state.BinaryDir+"/"+InstallScriptName, script.Bytes(), 0644); err != nil {
 		return nil, err
 	}
 
@@ -440,4 +463,58 @@ func (c *CMake) Build(ctx context.Context) (*BuildResult, error) {
 		return nil, err
 	}
 	return &BuildResult{Built: res.Built, UpToDate: res.UpToDate, Failed: res.Failed}, err
+}
+
+// InstallScriptName is the generated script that `cmake --install` runs. It
+// carries CMake's own name so that a build tree produced here is recognisable,
+// and readable, to anyone who knows where to look.
+const InstallScriptName = "cmake_install.cmake"
+
+// InstallOptions are the choices install defers to install time.
+type InstallOptions struct {
+	BinaryDir string
+	Prefix    string
+	Component string
+	Config    string
+}
+
+// Install runs a build tree's generated install script.
+//
+// Nothing is recomputed. The script was written at generate time and holds the
+// full list of what goes where; what a caller supplies here is only the part
+// that could not be known then -- the prefix, the component, the configuration.
+// That is why installing does not need the source tree, and why a build
+// directory can be installed long after the project that produced it moved.
+func (c *CMake) Install(ctx context.Context, opts InstallOptions) error {
+	binary, err := filepath.Abs(opts.BinaryDir)
+	if err != nil {
+		return err
+	}
+	binary = filepath.ToSlash(binary)
+	script := binary + "/" + InstallScriptName
+	if _, err := c.cfg.FS.Stat(script); err != nil {
+		return fmt.Errorf("%s does not contain %s; run cmake there first",
+			opts.BinaryDir, InstallScriptName)
+	}
+
+	state := eval.NewState(binary, binary, c.cfg.Env)
+	state.Runner = c.cfg.Runner
+	state.LogSink = c.logSink()
+	if opts.Prefix != "" {
+		state.SetVar("CMAKE_INSTALL_PREFIX", filepath.ToSlash(opts.Prefix))
+	}
+	if opts.Component != "" {
+		state.SetVar("CMAKE_INSTALL_COMPONENT", opts.Component)
+	}
+	if opts.Config != "" {
+		state.SetVar("CMAKE_INSTALL_CONFIG_NAME", opts.Config)
+	}
+
+	if err := eval.EvalCacheFile(ctx, state, evalFS{c.cfg.FS}, script); err != nil {
+		return err
+	}
+	if len(state.Errors) > 0 {
+		return fmt.Errorf("install failed")
+	}
+	return nil
 }

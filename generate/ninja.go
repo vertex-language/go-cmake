@@ -344,12 +344,20 @@ func (n *Ninja) objectPath(t *eval.TargetState, source string) string {
 
 // targetOutput is the file a target produces.
 func (n *Ninja) targetOutput(t *eval.TargetState) string {
-	dir := path.Join(n.BinaryDir, relativeTo(n.SourceDir, t.SourceDir))
+	return targetOutputPath(t, n.Toolchain, n.SourceDir, n.BinaryDir)
+}
+
+// targetOutputPath is where the build writes a target's file.
+//
+// It is shared rather than duplicated because the install script has to name
+// the same path: a copy of this logic that drifted by one prefix would produce
+// an install that silently copies nothing, and the build would still pass.
+func targetOutputPath(t *eval.TargetState, tc *toolchain.Toolchain, sourceDir, binaryDir string) string {
+	dir := path.Join(binaryDir, relativeTo(sourceDir, t.SourceDir))
 	name := t.Name
 	if v, ok := t.Properties["OUTPUT_NAME"]; ok && v != "" {
 		name = v
 	}
-	tc := n.Toolchain
 	switch t.Type {
 	case "EXECUTABLE":
 		return path.Join(dir, name+tc.ExeSuffix)
