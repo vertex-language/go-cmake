@@ -259,6 +259,12 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 	for k, v := range c.tc.Variables() {
 		state.Cache.Set(k, v, eval.CacheInternal, "", false)
 	}
+	// The flag defaults are the project's to change, so they are ordinary cache
+	// strings rather than internal ones: a -D replaces them, a CMakeLists.txt
+	// appends to them, and cmake -L shows them.
+	for k, v := range c.tc.Flags() {
+		state.Cache.Set(k, v, eval.CacheString, "Flags used by the compiler or linker", false)
+	}
 	state.Cache.Set("CMAKE_COMMAND", selfPath(), eval.CacheInternal, "", true)
 
 	// try_compile needs a compiler and somewhere to work. Handing it the same

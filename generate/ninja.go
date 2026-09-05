@@ -306,7 +306,7 @@ func (n *Ninja) writeObjects(b *ninjaWriter, r *Resolved) ([]string, error) {
 		b.buildEdge(obj, "compile_"+lang, []string{abs}, nil, map[string]string{
 			"DEFINES":  n.defineFlags(r.Defines),
 			"INCLUDES": n.includeFlags(r.IncludeDirs),
-			"FLAGS":    strings.Join(r.CompileOpts, " "),
+			"FLAGS":    n.compileFlags(r, lang),
 		})
 		objects = append(objects, obj)
 	}
@@ -378,12 +378,12 @@ func (n *Ninja) linkRuleFor(r *Resolved) (string, map[string]string) {
 	case "SHARED", "MODULE":
 		vars["LINK_PATH"] = n.linkPathFlags(r.LinkDirs)
 		vars["LINK_LIBS"] = n.linkLibFlags(r)
-		vars["LINK_FLAGS"] = strings.Join(r.LinkOpts, " ")
+		vars["LINK_FLAGS"] = strings.Join(append(n.linkerFlags(t), r.LinkOpts...), " ")
 		return "link_shared", vars
 	default:
 		vars["LINK_PATH"] = n.linkPathFlags(r.LinkDirs)
 		vars["LINK_LIBS"] = n.linkLibFlags(r)
-		vars["LINK_FLAGS"] = strings.Join(r.LinkOpts, " ")
+		vars["LINK_FLAGS"] = strings.Join(append(n.linkerFlags(t), r.LinkOpts...), " ")
 		return "link_exe", vars
 	}
 }
@@ -632,4 +632,95 @@ func relativeTo(base, target string) string {
 		return target[len(base)+1:]
 	}
 	return ""
+}
+
+// compileFlags assembles a compile line's flags, in CMake's order.
+//
+// The project's own options come last so they can override what the defaults
+// chose: a target asking for -O0 in a Release build gets it, because the later
+// flag on a compiler's command line is the one that wins.
+func (n *Ninja) compileFlags(r *Resolved, lang string) string {
+	var out []string
+	add := func(s string) {
+		if f := strings.Fields(s); len(f) > 0 {
+			out = append(out, f...)
+		}
+	}
+	state := n.Graph.State
+	add(state.GetVar("CMAKE_" + lang + "_FLAGS"))
+	if config := state.GetVar("CMAKE_BUILD_TYPE"); config != "" {
+		add(state.GetVar("CMAKE_" + lang + "_FLAGS_" + strings.ToUpper(config)))
+	}
+	out = append(out, n.msvcAbstractionFlags(r, lang)...)
+	out = append(out, r.CompileOpts...)
+	return strings.Join(out, " ")
+}
+
+// msvcAbstractionFlags renders the options CMake expresses as settings rather
+// than as flags: which C runtime to link against, and what debug information to
+// produce. They are settings because they have to agree across every object in
+// a build -- mixing runtimes is an ABI error the linker only sometimes catches.
+func (n *Ninja) msvcAbstractionFlags(r *Resolved, lang string) []string {
+	if n.Toolchain == nil || n.Toolchain.Kind() != toolchain.MSVC {
+		return nil
+	}
+	state := n.Graph.State
+	ctx := &genexContext{
+		graph:  n.Graph,
+		tc:     n.Toolchain,
+		ninja:  n,
+		target: r.Target,
+		config: state.GetVar("CMAKE_BUILD_TYPE"),
+		lang:   lang,
+	}
+	var out []string
+	runtime := r.Target.Properties["MSVC_RUNTIME_LIBRARY"]
+	if runtime == "" {
+		runtime = state.GetVar("CMAKE_MSVC_RUNTIME_LIBRARY")
+	}
+	if v, err := ctx.eval(runtime); err == nil {
+		if flag := toolchain.MSVCRuntimeFlag(v); flag != "" {
+			out = append(out, flag)
+		}
+	}
+	format := r.Target.Properties["MSVC_DEBUG_INFORMATION_FORMAT"]
+	if format == "" {
+		format = state.GetVar("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT")
+	}
+	if v, err := ctx.eval(format); err == nil {
+		switch v {
+		case "ProgramDatabase":
+			// /Zi writes to a database file, and every compilation in the
+			// directory writes to the same one unless told otherwise. Under a
+			// parallel build that is a race, so the target names its own.
+			out = append(out, "/Zi", "/Fd"+path.Join(n.BinaryDir, "CMakeFiles", r.Target.Name+".dir", r.Target.Name+".pdb"))
+		case "Embedded":
+			out = append(out, "/Z7")
+		case "EditAndContinue":
+			out = append(out, "/ZI")
+		}
+	}
+	return out
+}
+
+// linkerFlags is the same for the link step, where the variable to read depends
+// on what kind of thing is being produced.
+func (n *Ninja) linkerFlags(t *eval.TargetState) []string {
+	kind := "EXE"
+	switch t.Type {
+	case "SHARED":
+		kind = "SHARED"
+	case "MODULE":
+		kind = "MODULE"
+	case "STATIC":
+		kind = "STATIC"
+	}
+	state := n.Graph.State
+	var out []string
+	add := func(s string) { out = append(out, strings.Fields(s)...) }
+	add(state.GetVar("CMAKE_" + kind + "_LINKER_FLAGS"))
+	if config := state.GetVar("CMAKE_BUILD_TYPE"); config != "" {
+		add(state.GetVar("CMAKE_" + kind + "_LINKER_FLAGS_" + strings.ToUpper(config)))
+	}
+	return out
 }

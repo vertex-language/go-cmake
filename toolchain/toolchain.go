@@ -399,3 +399,80 @@ func ExtensionsFor(language string) []string {
 		return nil
 	}
 }
+
+// Flags renders the default compile and link flags a project expects to find.
+//
+// These are not decoration. CMAKE_<LANG>_FLAGS_RELEASE is where -O2 and
+// -DNDEBUG live, so a build that ignores it produces an unoptimised Release
+// with its assertions still firing -- and says "Release" while doing it. And
+// CMAKE_<LANG>_FLAGS is the variable every project reaches for when it wants a
+// warning level or a standard: `set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")`
+// is in more CMakeLists.txt files than target_compile_options is.
+//
+// They are seeded as cache entries rather than applied directly, because that
+// is what makes them the project's to change: a CMakeLists.txt appends to them,
+// a -D on the command line replaces them, and a build directory remembers what
+// it was told.
+func (t *Toolchain) Flags() map[string]string {
+	out := map[string]string{}
+	set := func(name, value string) { out[name] = value }
+
+	if t.Kind() == MSVC {
+		set("CMAKE_C_FLAGS", "/DWIN32 /D_WINDOWS")
+		set("CMAKE_CXX_FLAGS", "/DWIN32 /D_WINDOWS /EHsc")
+		for _, lang := range []string{"C", "CXX"} {
+			set("CMAKE_"+lang+"_FLAGS_DEBUG", "/Ob0 /Od")
+			set("CMAKE_"+lang+"_FLAGS_RELEASE", "/O2 /Ob2 /DNDEBUG")
+			set("CMAKE_"+lang+"_FLAGS_MINSIZEREL", "/O1 /Ob1 /DNDEBUG")
+			set("CMAKE_"+lang+"_FLAGS_RELWITHDEBINFO", "/O2 /Ob1 /DNDEBUG")
+		}
+		for _, kind := range []string{"EXE", "SHARED", "MODULE"} {
+			set("CMAKE_"+kind+"_LINKER_FLAGS", "")
+			set("CMAKE_"+kind+"_LINKER_FLAGS_DEBUG", "/debug /INCREMENTAL")
+			set("CMAKE_"+kind+"_LINKER_FLAGS_RELEASE", "/INCREMENTAL:NO")
+			set("CMAKE_"+kind+"_LINKER_FLAGS_MINSIZEREL", "/INCREMENTAL:NO")
+			set("CMAKE_"+kind+"_LINKER_FLAGS_RELWITHDEBINFO", "/debug /INCREMENTAL")
+		}
+		set("CMAKE_STATIC_LINKER_FLAGS", "")
+		// The runtime library is an ABI decision, not a preference: an object
+		// built against the static runtime and one built against the DLL cannot
+		// be linked together without the allocator in one freeing memory the
+		// other allocated. CMake picks the DLL by default and so does this.
+		set("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+		set("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT", "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
+		return out
+	}
+
+	set("CMAKE_C_FLAGS", "")
+	set("CMAKE_CXX_FLAGS", "")
+	for _, lang := range []string{"C", "CXX"} {
+		set("CMAKE_"+lang+"_FLAGS_DEBUG", "-g")
+		set("CMAKE_"+lang+"_FLAGS_RELEASE", "-O3 -DNDEBUG")
+		set("CMAKE_"+lang+"_FLAGS_MINSIZEREL", "-Os -DNDEBUG")
+		set("CMAKE_"+lang+"_FLAGS_RELWITHDEBINFO", "-O2 -g -DNDEBUG")
+	}
+	for _, kind := range []string{"EXE", "SHARED", "MODULE", "STATIC"} {
+		set("CMAKE_"+kind+"_LINKER_FLAGS", "")
+		for _, cfg := range []string{"DEBUG", "RELEASE", "MINSIZEREL", "RELWITHDEBINFO"} {
+			set("CMAKE_"+kind+"_LINKER_FLAGS_"+cfg, "")
+		}
+	}
+	return out
+}
+
+// MSVCRuntimeFlag maps a CMAKE_MSVC_RUNTIME_LIBRARY value to its compiler
+// option. An empty or unrecognised value selects nothing, which leaves the
+// compiler's own default -- the same thing CMake does with an empty value.
+func MSVCRuntimeFlag(value string) string {
+	switch value {
+	case "MultiThreaded":
+		return "/MT"
+	case "MultiThreadedDLL":
+		return "/MD"
+	case "MultiThreadedDebug":
+		return "/MTd"
+	case "MultiThreadedDebugDLL":
+		return "/MDd"
+	}
+	return ""
+}

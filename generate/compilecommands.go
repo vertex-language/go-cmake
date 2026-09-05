@@ -75,7 +75,7 @@ func (c *CompileCommands) Entries() []CompileCommand {
 			object := n.objectPath(r.Target, abs)
 			out = append(out, CompileCommand{
 				Directory: c.BinaryDir,
-				Command:   c.commandFor(n, compiler, r, abs, object),
+				Command:   c.commandFor(n, compiler, r, abs, object, lang),
 				File:      abs,
 				Output:    relativeTo(c.BinaryDir, object),
 			})
@@ -90,7 +90,7 @@ func (c *CompileCommands) Entries() []CompileCommand {
 // language server is told matches what the compiler is given. Two renderings
 // that drifted would produce an editor confidently reporting errors in code
 // that builds.
-func (c *CompileCommands) commandFor(n *Ninja, compiler toolchain.Compiler, r *Resolved, source, object string) string {
+func (c *CompileCommands) commandFor(n *Ninja, compiler toolchain.Compiler, r *Resolved, source, object, lang string) string {
 	parts := []string{quoteCommand(compiler.Path)}
 	if c.Toolchain.Kind() == toolchain.MSVC {
 		parts = append(parts, "/nologo")
@@ -101,7 +101,10 @@ func (c *CompileCommands) commandFor(n *Ninja, compiler toolchain.Compiler, r *R
 	if includes := n.includeFlags(r.IncludeDirs); includes != "" {
 		parts = append(parts, includes)
 	}
-	if flags := strings.Join(r.CompileOpts, " "); flags != "" {
+	// The same assembly the build uses, not just the target's own options: an
+	// editor that parses the file without the definitions and the standard the
+	// build compiles with reports errors the compiler never sees.
+	if flags := n.compileFlags(r, lang); flags != "" {
 		parts = append(parts, flags)
 	}
 	if c.Toolchain.Kind() == toolchain.MSVC {
