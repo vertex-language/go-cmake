@@ -112,7 +112,9 @@ func (in *Install) writeRule(b *strings.Builder, rule eval.InstallRule) error {
 			// string rather than run a command.
 			b.WriteString("  " + item + "\n")
 		}
-	case "EXPORT", "IMPORTED_RUNTIME_ARTIFACTS":
+	case "EXPORT":
+		in.writeExport(b, rule)
+	case "IMPORTED_RUNTIME_ARTIFACTS":
 		fmt.Fprintf(b, "  # install(%s) is recorded but not generated\n", rule.Kind)
 	}
 
@@ -129,13 +131,11 @@ func (in *Install) writeTargets(b *strings.Builder, rule eval.InstallRule) {
 			fmt.Fprintf(b, "  message(FATAL_ERROR \"install(TARGETS) given unknown target %s\")\n", name)
 			continue
 		}
-		dest := rule.Destination
-		if dest == "" {
-			dest = defaultTargetDestination(r.Target.Type)
+		for _, art := range in.artifactsOf(r.Target) {
+			dest := artifactDestination(rule, art.keyword, r.Target.Type)
+			fmt.Fprintf(b, "  file(INSTALL DESTINATION %q TYPE %s %sFILES %q)\n",
+				in.prefixed(dest), art.installType, optionalFlag(rule), art.path)
 		}
-		fmt.Fprintf(b, "  file(INSTALL DESTINATION %q TYPE %s %sFILES %q)\n",
-			in.prefixed(dest), installTypeFor(r.Target.Type), optionalFlag(rule),
-			in.targetOutput(r.Target))
 	}
 }
 
@@ -269,4 +269,71 @@ func (in *Install) InstalledFiles() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// artifact is one file a target produces and one place install(TARGETS) may
+// have been told to put it.
+type artifact struct {
+	path        string
+	keyword     string // ARCHIVE, LIBRARY or RUNTIME
+	installType string // the TYPE keyword file(INSTALL) wants
+}
+
+// artifactsOf lists what a target produces.
+//
+// A shared library on Windows produces two files, and they belong in different
+// directories: the DLL goes next to the programs that load it and the import
+// library goes with the other link-time files. Installing only one of them
+// produces a package that either cannot be linked against or cannot be run.
+func (in *Install) artifactsOf(t *eval.TargetState) []artifact {
+	built := in.targetOutput(t)
+	switch t.Type {
+	case "EXECUTABLE":
+		return []artifact{{built, "RUNTIME", "EXECUTABLE"}}
+	case "SHARED", "MODULE":
+		out := []artifact{{built, "RUNTIME", "SHARED_LIBRARY"}}
+		if in.Toolchain != nil && in.Toolchain.ImportSuffix != "" {
+			implib := strings.TrimSuffix(built, in.Toolchain.SharedSuffix) + in.Toolchain.ImportSuffix
+			out = append(out, artifact{implib, "ARCHIVE", "STATIC_LIBRARY"})
+		} else {
+			// Everywhere else the one file is both what is linked and what is
+			// loaded, so LIBRARY is the keyword that places it.
+			out[0].keyword = "LIBRARY"
+		}
+		return out
+	case "INTERFACE", "UTILITY", "OBJECT":
+		return nil
+	default:
+		return []artifact{{built, "ARCHIVE", "STATIC_LIBRARY"}}
+	}
+}
+
+// artifactDestination picks where one artifact goes: the keyword's own
+// destination if the rule gave it one, then the rule's plain DESTINATION, then
+// the convention.
+func artifactDestination(rule eval.InstallRule, keyword, targetType string) string {
+	if d, ok := rule.ArtifactDest[keyword]; ok && d != "" {
+		return d
+	}
+	if rule.Destination != "" {
+		return rule.Destination
+	}
+	if keyword == "RUNTIME" {
+		return "bin"
+	}
+	return defaultTargetDestination(targetType)
+}
+
+// writeExport installs the staged targets file.
+//
+// The file itself was written during generation; all the install script has to
+// do is copy it, which is why nothing here knows what is in it.
+func (in *Install) writeExport(b *strings.Builder, rule eval.InstallRule) {
+	file := rule.File
+	if file == "" {
+		file = rule.Export + ".cmake"
+	}
+	staged := path.Join(in.BinaryDir, "CMakeFiles", "Export", rule.Export, file)
+	fmt.Fprintf(b, "  file(INSTALL DESTINATION %q TYPE FILE FILES %q)\n",
+		in.prefixed(rule.Destination), staged)
 }

@@ -30,6 +30,13 @@ type genexContext struct {
 	target *eval.TargetState // the target whose property is being evaluated
 	config string            // the build configuration, e.g. Release
 	lang   string            // the language being compiled, when known
+
+	// installInterface selects which side of $<BUILD_INTERFACE:> and
+	// $<INSTALL_INTERFACE:> applies. Everything this package builds is a build
+	// tree, so the build side is the answer everywhere except in an export
+	// file for the install tree, which describes a place that does not exist
+	// yet.
+	installInterface bool
 }
 
 // evalGenexList evaluates every entry of a list, dropping the ones that
@@ -310,10 +317,14 @@ func (c *genexContext) evalOne(inner string) (string, error) {
 
 	// ---- interface selection ----
 	case "BUILD_INTERFACE":
-		// Everything this package produces is a build tree, never an installed
-		// one, so the build side is always the one that applies.
+		if c.installInterface {
+			return "", nil
+		}
 		return c.eval(args)
 	case "INSTALL_INTERFACE":
+		if c.installInterface {
+			return c.eval(args)
+		}
 		return "", nil
 	case "BUILD_LOCAL_INTERFACE":
 		return c.eval(args)
@@ -461,8 +472,11 @@ func (c *genexContext) targetFile(args string, linker bool) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("$<TARGET_FILE:%s> refers to a target that does not exist", name)
 	}
-	if loc, ok := t.Properties["IMPORTED_LOCATION"]; ok && t.Imported {
-		return loc, nil
+	if t.Imported {
+		if loc, ok := ImportedFile(t, c.config, linker); ok {
+			return loc, nil
+		}
+		return "", fmt.Errorf("imported target %s has no location for configuration %q", name, c.config)
 	}
 	if linker {
 		return c.ninja.linkFileFor(t), nil

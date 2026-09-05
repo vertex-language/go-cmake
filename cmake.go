@@ -410,6 +410,33 @@ func (c *CMake) generateFrom(ctx context.Context, state *eval.State) (*GenerateR
 		return nil, err
 	}
 
+	// The targets files come before the install script, because the script
+	// installs one of them: an export is generated here and copied there.
+	exporter := &generate.Export{
+		Graph:     graph,
+		Toolchain: c.toolchain(state),
+		SourceDir: state.SourceDir,
+		BinaryDir: state.BinaryDir,
+	}
+	buildFiles, err := exporter.BuildTreeFiles()
+	if err != nil {
+		return nil, err
+	}
+	installFiles, err := exporter.InstallFiles()
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range buildFiles {
+		if err := c.writeGenerated(f.Path, f.Content); err != nil {
+			return nil, err
+		}
+	}
+	for _, f := range installFiles {
+		if err := c.writeGenerated(f.StagedPath, f.Content); err != nil {
+			return nil, err
+		}
+	}
+
 	// The install rules become a script rather than an action, so that the
 	// prefix and component can be chosen when the install runs rather than now.
 	installer := &generate.Install{
@@ -664,4 +691,14 @@ func (c *CMake) generatorName() string {
 		return c.cfg.Generator
 	}
 	return "Ninja"
+}
+
+// writeGenerated writes one generated file, creating the directory it needs.
+func (c *CMake) writeGenerated(path, content string) error {
+	if i := strings.LastIndexByte(path, '/'); i > 0 {
+		if err := c.cfg.FS.MkdirAll(path[:i], 0755); err != nil {
+			return err
+		}
+	}
+	return c.cfg.FS.WriteFile(path, []byte(content), 0644)
 }

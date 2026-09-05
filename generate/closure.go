@@ -269,3 +269,45 @@ func (g *Graph) Sorted() []string {
 	sort.Strings(out)
 	return out
 }
+
+// ImportedFile is the file an imported target contributes, and whether it is
+// the one to link against or the one to load.
+//
+// A targets file written by CMake -- ours or anyone's -- states the location
+// per configuration: IMPORTED_LOCATION_RELEASE beside an IMPORTED_CONFIGURATIONS
+// list, with the unsuffixed IMPORTED_LOCATION as the fallback for a
+// configuration the package was not built for. Reading only the unsuffixed one
+// works with files this package writes and with almost nothing else, which is
+// the wrong half of the world to be compatible with.
+//
+// On Windows a shared library is two files: the DLL is loaded and the import
+// library is linked. IMPORTED_IMPLIB names the second, and a link line that
+// used the DLL instead would fail.
+func ImportedFile(t *eval.TargetState, config string, forLinking bool) (string, bool) {
+	suffixes := []string{}
+	if config != "" {
+		suffixes = append(suffixes, "_"+strings.ToUpper(config))
+	}
+	// A package built for one configuration and consumed from another still has
+	// to link, so every configuration it does carry is a candidate.
+	for _, c := range eval.SplitList(t.Properties["IMPORTED_CONFIGURATIONS"]) {
+		s := "_" + strings.ToUpper(c)
+		if len(suffixes) == 0 || suffixes[0] != s {
+			suffixes = append(suffixes, s)
+		}
+	}
+	suffixes = append(suffixes, "")
+
+	names := []string{"IMPORTED_LOCATION"}
+	if forLinking {
+		names = []string{"IMPORTED_IMPLIB", "IMPORTED_LOCATION"}
+	}
+	for _, name := range names {
+		for _, suffix := range suffixes {
+			if v, ok := t.Properties[name+suffix]; ok && v != "" {
+				return v, true
+			}
+		}
+	}
+	return "", false
+}

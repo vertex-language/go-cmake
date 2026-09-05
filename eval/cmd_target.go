@@ -27,7 +27,7 @@ func init() {
 	register("add_test", cmdAddTest)
 	register("set_tests_properties", cmdSetTestsProperties)
 	register("install", cmdInstall)
-	register("export", cmdNoOp)
+	register("export", cmdExport)
 }
 
 // libraryTypes are the keywords add_library accepts in place of a source file.
@@ -722,12 +722,22 @@ func cmdInstall(_ context.Context, e *evaluator, args []Arg) error {
 	default:
 		return e.fatalf("install does not recognize mode %s", rule.Kind)
 	}
+
+	// The artifact keywords each open a group of their own: everything after
+	// ARCHIVE until the next keyword describes where archives go, and so on.
+	// artifact remembers which group is open so that a DESTINATION lands in it
+	// rather than on the rule as a whole.
+	artifact := ""
 	for _, a := range v {
 		switch a {
+		case "ARCHIVE", "LIBRARY", "RUNTIME", "OBJECTS", "FRAMEWORK", "BUNDLE",
+			"PUBLIC_HEADER", "PRIVATE_HEADER", "RESOURCE", "FILE_SET":
+			artifact = a
+			keyword = a
+			continue
 		case "DESTINATION", "COMPONENT", "PERMISSIONS", "RENAME", "CONFIGURATIONS",
-			"ARCHIVE", "LIBRARY", "RUNTIME", "OBJECTS", "FRAMEWORK", "BUNDLE",
-			"PUBLIC_HEADER", "PRIVATE_HEADER", "RESOURCE", "FILE_SET", "NAMESPACE",
-			"INCLUDES", "PATTERN", "REGEX", "EXCLUDE", "TYPE", "EXPORT":
+			"NAMESPACE", "INCLUDES", "PATTERN", "REGEX", "EXCLUDE", "TYPE",
+			"EXPORT", "FILE":
 			keyword = a
 			continue
 		case "OPTIONAL":
@@ -741,10 +751,34 @@ func cmdInstall(_ context.Context, e *evaluator, args []Arg) error {
 		case "ITEMS":
 			rule.Items = append(rule.Items, a)
 		case "DESTINATION":
-			rule.Destination = a
+			if artifact != "" {
+				if rule.ArtifactDest == nil {
+					rule.ArtifactDest = map[string]string{}
+				}
+				rule.ArtifactDest[artifact] = a
+			} else {
+				rule.Destination = a
+			}
+			artifact = ""
 			keyword = ""
+		case "INCLUDES":
+			// install(TARGETS ... INCLUDES DESTINATION a b) -- the DESTINATION
+			// here takes a list, and it is the one place the keyword does not
+			// name a directory for the files being installed.
+			if a != "DESTINATION" {
+				rule.IncludeDest = append(rule.IncludeDest, a)
+			}
 		case "COMPONENT":
 			rule.Component = a
+			keyword = ""
+		case "EXPORT":
+			rule.Export = a
+			keyword = ""
+		case "NAMESPACE":
+			rule.Namespace = a
+			keyword = ""
+		case "FILE":
+			rule.File = a
 			keyword = ""
 		case "RENAME":
 			rule.Rename = a
@@ -760,7 +794,81 @@ func cmdInstall(_ context.Context, e *evaluator, args []Arg) error {
 			keyword = ""
 		}
 	}
+
+	// An export set is recorded on the targets as well as on the rule: the
+	// generator walks targets, and asking each one which sets it belongs to is
+	// how it finds out without re-reading every install rule.
+	if rule.Kind == "TARGETS" && rule.Export != "" {
+		for _, name := range rule.Items {
+			if t, ok := e.state.Targets[name]; ok {
+				t.ExportSets = append(t.ExportSets, rule.Export)
+			}
+		}
+	}
+	if rule.Kind == "EXPORT" && len(rule.Items) > 0 && rule.Export == "" {
+		rule.Export = rule.Items[0]
+	}
 	e.state.InstallRules = append(e.state.InstallRules, rule)
+	return nil
+}
+
+// cmdExport writes a targets file for the build tree.
+//
+// It is the same file install(EXPORT) writes, pointed at the build directory
+// rather than the install prefix, and it exists for the case where a project is
+// used without being installed at all -- a superbuild, or a developer pointing
+// one checkout at another.
+func cmdExport(_ context.Context, e *evaluator, args []Arg) error {
+	v := Args(args)
+	if len(v) == 0 {
+		return e.fatalf("export called with incorrect number of arguments")
+	}
+	req := ExportRequest{SourceDir: e.state.Dir().Source}
+	keyword := ""
+	for i := 0; i < len(v); i++ {
+		switch v[i] {
+		case "EXPORT", "TARGETS", "NAMESPACE", "FILE", "PACKAGE", "SETUP", "ANDROID_MK":
+			keyword = v[i]
+			continue
+		case "APPEND", "EXPORT_LINK_INTERFACE_LIBRARIES":
+			req.Append = req.Append || v[i] == "APPEND"
+			continue
+		}
+		switch keyword {
+		case "EXPORT":
+			req.Set = v[i]
+			keyword = ""
+		case "TARGETS":
+			req.Targets = append(req.Targets, v[i])
+		case "NAMESPACE":
+			req.Namespace = v[i]
+			keyword = ""
+		case "FILE":
+			req.File = v[i]
+			keyword = ""
+		case "PACKAGE":
+			// export(PACKAGE name) writes into the user package registry, a
+			// per-user directory outside the build tree. Touching a developer's
+			// home directory is not something a build should do unasked, and
+			// CMake itself disables it by default since CMP0090.
+			return nil
+		case "SETUP", "ANDROID_MK":
+			// export(SETUP) configures an existing set; export(ANDROID_MK)
+			// writes a different file format entirely.
+			return nil
+		}
+	}
+	if req.Set == "" && len(req.Targets) == 0 {
+		return nil
+	}
+	if req.File == "" {
+		if req.Set != "" {
+			req.File = req.Set + ".cmake"
+		} else {
+			return e.fatalf("export called without an output FILE")
+		}
+	}
+	e.state.Exports = append(e.state.Exports, req)
 	return nil
 }
 

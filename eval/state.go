@@ -104,6 +104,7 @@ type State struct {
 
 	// InstallRules collects install() directives in declaration order.
 	InstallRules []InstallRule
+	Exports      []ExportRequest
 
 	// CustomCommands collects add_custom_command(OUTPUT ...) rules.
 	CustomCommands []CustomCommand
@@ -168,6 +169,40 @@ type InstallRule struct {
 	Optional    bool
 	Rename      string
 	SourceDir   string
+
+	// ArtifactDest is install(TARGETS)'s per-kind destination: ARCHIVE, LIBRARY,
+	// RUNTIME and the rest. A static library, an import library and a DLL go to
+	// three different places on Windows, so one destination for the rule is not
+	// enough -- and taking the last one written would put a .lib in bin.
+	ArtifactDest map[string]string
+
+	// Export is the export set these targets belong to, from
+	// install(TARGETS ... EXPORT <name>), or the set install(EXPORT <name>)
+	// writes out.
+	Export string
+	// Namespace and File belong to install(EXPORT).
+	Namespace string
+	File      string
+	// IncludeDest is install(TARGETS ... INCLUDES DESTINATION <d>): directories
+	// added to the exported target's interface, relative to the install prefix.
+	IncludeDest []string
+}
+
+// ExportRequest is an export() call: a targets file written into the build tree
+// so another project can use these targets without installing them first.
+//
+// install(EXPORT) writes the same kind of file for the install tree. The two
+// differ only in what the paths inside them are relative to, which is why they
+// share a generator rather than having one each.
+type ExportRequest struct {
+	// Set is the export set named by export(EXPORT <set>), empty for the
+	// export(TARGETS ...) form, which names its targets directly.
+	Set       string
+	Targets   []string
+	Namespace string
+	File      string // where to write it, relative to the binary directory
+	Append    bool
+	SourceDir string
 }
 
 // CustomCommand is an add_custom_command(OUTPUT ...) rule: the build-graph
@@ -281,6 +316,10 @@ type TargetState struct {
 	IfaceLinkOpts     []string
 	IfaceLinkDirs     []string
 	IfaceLinkLibs     []string
+
+	// ExportSets names every install(TARGETS ... EXPORT <set>) this target was
+	// listed in, which is how an export knows what to write.
+	ExportSets []string
 
 	// Custom commands attached to this target.
 	PreBuild  [][]string

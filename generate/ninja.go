@@ -449,7 +449,7 @@ func (n *Ninja) linkLibFlags(r *Resolved) string {
 			case t.Type == "OBJECT" || t.Type == "INTERFACE":
 				continue // already contributed as objects or as requirements
 			case t.Imported:
-				if loc, ok := t.Properties["IMPORTED_LOCATION"]; ok {
+				if loc, ok := ImportedFile(t, n.Graph.State.GetVar("CMAKE_BUILD_TYPE"), true); ok {
 					out = append(out, quoteArg(loc))
 				}
 				continue

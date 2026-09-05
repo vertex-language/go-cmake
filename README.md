@@ -358,6 +358,12 @@ has to be equal, byte for byte, wrapping and blank lines included. A diagnostic
 is the part of a build tool people actually read, and one that wraps at a
 different column is a difference somebody has to reconcile by hand.
 
+**Interoperation tests** (`export_test.go`, `archive/`) require the two
+implementations to read each other's output. Real cmake configures against a
+package this program installed, and this program configures against one real
+cmake installed; both then run the program that came out. A generated file only
+this program can read would pass every other test and still be useless.
+
 **End-to-end tests** (`endtoend_test.go`) compile, link, and run real programs.
 They are the only tests that can catch a build file that parses, schedules, and
 produces a binary that does not work.
