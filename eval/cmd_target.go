@@ -28,7 +28,6 @@ func init() {
 	register("set_tests_properties", cmdSetTestsProperties)
 	register("install", cmdInstall)
 	register("export", cmdNoOp)
-	register("add_compile_test", cmdNoOp)
 }
 
 // libraryTypes are the keywords add_library accepts in place of a source file.

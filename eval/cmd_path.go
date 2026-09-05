@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+func init() {
+	register("get_filename_component", cmdGetFilenameComponent)
+	register("cmake_path", cmdCMakePath)
+}
+
 // cmdGetFilenameComponent decomposes a path. It predates cmake_path() and is
 // still what most projects in the wild use.
 func cmdGetFilenameComponent(_ context.Context, e *evaluator, args []Arg) error {

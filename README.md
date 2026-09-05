@@ -19,7 +19,7 @@ c, _ := cmake.New(cmake.Config{
     Vars:      map[string]string{"CMAKE_BUILD_TYPE": "Release"},
     Jobs:      8,
     FS:        cmake.RealFS(""),
-    Runner:    cmake.RealRunner(),
+    Runner:    run.OS(),
 })
 res, err := c.Build(ctx)
 ```
@@ -72,12 +72,13 @@ where each package stands; the coverage figures are `go test -cover`.
 | [`ast`](ast/) | complete | — |
 | [`parser`](parser/) | complete | 76% |
 | [`expr`](expr/) | complete | 64% |
-| [`eval`](eval/) | 93 of 132 documented commands | 55% |
-| [`generate`](generate/) | usage-requirement closure, generator expressions, Ninja output | 50% |
+| [`eval`](eval/) | 93 of 132 documented commands (76 in the command table, 17 control-flow constructs) | 55% |
+| [`generate`](generate/) | usage-requirement closure, generator expressions, Ninja output | 51% |
 | [`toolchain`](toolchain/) | GCC, Clang, MSVC discovery | — |
 | [`ninja`](ninja/) | parser, scheduler, build log | 77% |
-| [`build`](build/) | `--build`, `--install` | — |
-| [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 39% |
+| [`build`](build/) | `--build` | — |
+| [`run`](run/) | the one Command and Runner every phase uses | — |
+| [`cli`](cli/) | configure, `-P`, `-E`, `--build` | 42% |
 | [`cmake`](.) | the facade | 51% |
 
 **What demonstrably works.** The end-to-end tests in
@@ -138,7 +139,7 @@ generate|  usage-requirement closure, link order, generator expressions,
    ninja|  the build file parser, the scheduler that decides what not to run,
         |  and the build log that makes that decision correct
         |
-   build|  cmake --build and cmake --install
+   build|  cmake --build
         |        <- build phase: the only stage that changes anything
         v
      the files
@@ -206,18 +207,22 @@ type Config struct {
     Flags     Flags             // --fresh --warn-uninitialized --log-level ...
 
     FS     FS
-    Runner Runner
+    Runner run.Runner
     Out    io.Writer
     Err    io.Writer
 }
 ```
 
-`FS` is the package's only contact with the disk. `Runner` is how a caller
-takes over process execution without taking over CMake:
+`FS` is the package's only contact with the disk. `Runner`, from
+[`run`](run/), is how a caller takes over process execution without taking over
+CMake. Every phase that starts a process — `execute_process` during configure,
+compiler detection during generate, the compile and link lines during build,
+and `cmake -E chdir` — goes through this one interface:
 
 ```go
+// package run
 type Runner interface {
-    Run(ctx context.Context, cmd Command) error
+    Run(ctx context.Context, cmd Command) (exitCode int, err error)
 }
 
 type Command struct {
@@ -239,9 +244,15 @@ compiler path containing a space (which the default Visual Studio location has)
 arrives mangled. A `Runner` that executes commands should prefer `Line`; one
 that only inspects or logs them can read `Argv`.
 
-The default `Runner` forks a subprocess. A `Runner` of your own can intercept
-compiler invocations, cache object files, record inputs and outputs, or redirect
-output to a structured log. A test `Runner` appends to a slice.
+`run.OS()` forks a subprocess. A `Runner` of your own can intercept compiler
+invocations, cache object files, record inputs and outputs, or redirect output
+to a structured log. A test `Runner` appends to a slice.
+
+A non-zero exit is reported as a status, not an error; only a command that could
+not be started at all returns one. That distinction is the whole reason the
+interface has this shape: `execute_process` puts a status in `RESULT_VARIABLE`
+and carries on, while a missing executable fails configure, and a compile step
+that exits non-zero must fail the build rather than look like a broken runner.
 
 ---
 
@@ -289,7 +300,7 @@ func Main(ctx context.Context, e Env) int
 |---|---|
 | configure | `-S` `-B` `-G` `-D` `-U` `--preset` `--toolchain` `--fresh` `--log-level` `-j` |
 | build | `cmake --build <dir> [--target ...] [--config ...] [-j N] [--clean-first] [--verbose]` |
-| install | `cmake --install <dir> [--prefix ...] [--component ...] [--strip]` |
+| install | `cmake --install` — reports that it is not implemented (see below) |
 | script | `cmake -P <script.cmake> [args...]` — the language with no project and no cache |
 | tool | `cmake -E <command>` — the portable shell that generated build rules call |
 
@@ -339,7 +350,9 @@ one that says it cannot.
 3. **`FetchContent` and `ExternalProject`.** Both need network access.
    `file(DOWNLOAD)` and `file(UPLOAD)` are refused for the same reason.
 4. **`install()` beyond recording the rules.** The rules are parsed and kept in
-   `State.InstallRules`; the copying is not wired to them yet.
+   `State.InstallRules`, which a caller can read after configure; nothing writes
+   them into the build tree, so `cmake --install` reports that it is not
+   implemented rather than delegating to whatever `cmake` is on `PATH`.
 5. **CTest and CPack.** `add_test` and `enable_testing` record what a project
    declares; no test driver runs it. The `ctest_*` script commands are absent.
 6. **39 of 132 documented commands**, of which 13 are `ctest_*` and most of the

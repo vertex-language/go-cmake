@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"sort"
 	"strings"
 
 	"github.com/vertex-language/go-cmake/ast"
@@ -228,3 +229,17 @@ func SplitList(v string) []string { return expr.SplitList(v) }
 
 // JoinList joins elements into a CMake list value.
 func JoinList(elems []string) string { return expr.JoinList(elems) }
+
+// Commands returns the names of every built-in command, sorted.
+//
+// The command table is assembled from an init in each cmd_*.go file, which
+// keeps a command's registration next to its implementation but means nothing
+// checks that the table is complete. This is what lets a test assert that it is.
+func Commands() []string {
+	names := make([]string, 0, len(commands))
+	for n := range commands {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
