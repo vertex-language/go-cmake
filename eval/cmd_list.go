@@ -430,7 +430,7 @@ func listSort(e *evaluator, name string, items, rest []string) error {
 			less = func(a, b string) bool { return a < b }
 		}
 	case "FILE_BASENAME":
-		less = func(a, b string) bool { return baseName(a) < baseName(b) }
+		less = func(a, b string) bool { return BaseName(a) < BaseName(b) }
 	case "NATURAL":
 		less = func(a, b string) bool { return naturalLess(a, b) }
 	default:
@@ -447,14 +447,6 @@ func listSort(e *evaluator, name string, items, rest []string) error {
 	})
 	e.state.SetVar(name, JoinList(items))
 	return nil
-}
-
-func baseName(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		return p[i+1:]
-	}
-	return p
 }
 
 // naturalLess compares strings so that embedded runs of digits compare

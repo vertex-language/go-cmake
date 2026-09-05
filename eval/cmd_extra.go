@@ -49,7 +49,7 @@ var sourceExtensions = map[string]bool{
 }
 
 func extensionOf(p string) string {
-	base := baseName(p)
+	base := BaseName(p)
 	if i := strings.LastIndexByte(base, '.'); i >= 0 {
 		return base[i:]
 	}

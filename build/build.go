@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"runtime"
 
 	"github.com/vertex-language/go-cmake/ninja"
+	"github.com/vertex-language/go-cmake/run"
 )
 
 type Config struct {
@@ -19,32 +18,10 @@ type Config struct {
 	CleanFirst bool
 	Verbose    bool
 	Generator  string
-	Runner     Runner
+	Runner     run.Runner
 	Env        []string
 	Out        io.Writer
 	Err        io.Writer
-}
-
-type Runner interface {
-	Run(ctx context.Context, cmd Command) error
-}
-
-type Command struct {
-	Argv   []string
-	Dir    string
-	Env    []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-
-	// Line is set when the command is a shell command line rather than an
-	// argument vector, which is what a build file's commands are. It exists
-	// because cmd.exe does not parse its argument the way the C runtime quotes
-	// it: a compiler path containing a space cannot be passed through an argv
-	// to `cmd /c` without being mangled. A Runner that executes the command
-	// should prefer Line when it is set; Argv is a best-effort rendering for a
-	// Runner that only wants to inspect or log it.
-	Line string
 }
 
 type Result struct {
@@ -105,9 +82,8 @@ func Build(ctx context.Context, cfg Config) (*Result, error) {
 		Out:     orStdout(cfg.Out),
 		Err:     orStderr(cfg.Err),
 	}
-	if cfg.Runner != nil {
-		driver.Runner = &commandRunner{runner: cfg.Runner, env: cfg.Env}
-	}
+	driver.Runner = cfg.Runner
+	driver.Env = cfg.Env
 
 	res, err := driver.Build(ctx)
 	if res == nil {
@@ -147,30 +123,6 @@ func writeDepsLog(binaryDir string, log *ninja.Log) {
 	_ = deps.Write(f)
 }
 
-// commandRunner adapts the caller's Runner, which takes an argv, to the shell
-// command line a build file holds. The command is handed to the platform shell
-// because that is what the build file's syntax means: it may contain
-// redirection, an && chain, or quoting that only a shell resolves.
-type commandRunner struct {
-	runner Runner
-	env    []string
-}
-
-func (r *commandRunner) Run(ctx context.Context, cmd, dir string, stdout, stderr io.Writer) error {
-	argv := []string{"/bin/sh", "-c", cmd}
-	if runtime.GOOS == "windows" {
-		argv = []string{"cmd", "/c", cmd}
-	}
-	return r.runner.Run(ctx, Command{
-		Argv:   argv,
-		Line:   cmd,
-		Dir:    dir,
-		Env:    r.env,
-		Stdout: stdout,
-		Stderr: stderr,
-	})
-}
-
 func orStdout(w io.Writer) io.Writer {
 	if w == nil {
 		return os.Stdout
@@ -183,95 +135,4 @@ func orStderr(w io.Writer) io.Writer {
 		return os.Stderr
 	}
 	return w
-}
-
-type InstallConfig struct {
-	BinaryDir string
-	Prefix    string
-	Component string
-	Config    string
-	Strip     bool
-	Runner    Runner
-	Env       []string
-	Out, Err  io.Writer
-}
-
-func Install(ctx context.Context, cfg InstallConfig) error {
-	args := []string{"--install", cfg.BinaryDir}
-	if cfg.Prefix != "" {
-		args = append(args, "--prefix", cfg.Prefix)
-	}
-	if cfg.Config != "" {
-		args = append(args, "--config", cfg.Config)
-	}
-	c := Command{
-		Argv:   append([]string{"cmake"}, args...),
-		Dir:    ".",
-		Env:    cfg.Env,
-		Stdout: cfg.Out,
-		Stderr: cfg.Err,
-	}
-	return cfg.Runner.Run(ctx, c)
-}
-
-type CTestConfig struct {
-	BinaryDir       string
-	Config          string
-	Jobs            int
-	OutputOnFailure bool
-	Preset          string
-	Include         string
-	Exclude         string
-	LabelInclude    string
-	LabelExclude    string
-	Runner          Runner
-	Env             []string
-	Out, Err        io.Writer
-}
-
-func CTest(ctx context.Context, cfg CTestConfig) error {
-	c := Command{
-		Argv:   []string{"ctest"},
-		Dir:    cfg.BinaryDir,
-		Env:    cfg.Env,
-		Stdout: cfg.Out,
-		Stderr: cfg.Err,
-	}
-	return cfg.Runner.Run(ctx, c)
-}
-
-type CPackConfig struct {
-	BinaryDir   string
-	Generators  []string
-	Config      string
-	PackageName string
-	Version     string
-	Variables   map[string]string
-	Runner      Runner
-	Env         []string
-	Out, Err    io.Writer
-}
-
-func CPack(ctx context.Context, cfg CPackConfig) error {
-	c := Command{
-		Argv:   []string{"cpack"},
-		Dir:    cfg.BinaryDir,
-		Env:    cfg.Env,
-		Stdout: cfg.Out,
-		Stderr: cfg.Err,
-	}
-	return cfg.Runner.Run(ctx, c)
-}
-
-// OSRunner runs commands locally.
-type OSRunner struct{}
-
-func (OSRunner) Run(ctx context.Context, cmd Command) error {
-	c := exec.CommandContext(ctx, cmd.Argv[0], cmd.Argv[1:]...)
-	c.Dir = cmd.Dir
-	c.Env = cmd.Env
-	c.Stdin = cmd.Stdin
-	c.Stdout = cmd.Stdout
-	c.Stderr = cmd.Stderr
-	return c.Run()
 }

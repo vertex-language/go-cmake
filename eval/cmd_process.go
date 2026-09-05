@@ -6,30 +6,14 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/vertex-language/go-cmake/run"
 )
 
 func init() {
 	register("execute_process", cmdExecuteProcess)
 	register("try_compile", cmdTryCompile)
 	register("try_run", cmdTryRun)
-}
-
-// Command is one process invocation requested during configure.
-type Command struct {
-	Argv   []string
-	Dir    string
-	Env    []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-}
-
-// Runner executes a command. The configure phase needs one because
-// execute_process and try_compile are not decidable without running something;
-// a State without a Runner reports those commands as unavailable rather than
-// pretending they succeeded.
-type Runner interface {
-	Run(ctx context.Context, cmd Command) (exitCode int, err error)
 }
 
 // cmdExecuteProcess runs one or more commands, optionally piped together.
@@ -151,7 +135,7 @@ func cmdExecuteProcess(ctx context.Context, e *evaluator, args []Arg) error {
 
 	for i, argv := range commands {
 		var out bytes.Buffer
-		cmd := Command{
+		cmd := run.Command{
 			Argv:   argv,
 			Dir:    workDir,
 			Env:    e.state.envSlice(),

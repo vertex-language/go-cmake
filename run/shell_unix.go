@@ -1,6 +1,6 @@
 //go:build !windows
 
-package ninja
+package run
 
 import (
 	"context"

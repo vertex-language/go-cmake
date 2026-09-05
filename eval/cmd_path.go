@@ -22,26 +22,26 @@ func cmdGetFilenameComponent(_ context.Context, e *evaluator, args []Arg) error 
 	case "DIRECTORY", "PATH":
 		result = dirOf(p)
 	case "NAME":
-		result = baseName(p)
+		result = BaseName(p)
 	case "EXT":
 		// EXT is the longest extension: "a.tar.gz" yields ".tar.gz".
-		name := baseName(p)
+		name := BaseName(p)
 		if i := strings.IndexByte(name, '.'); i >= 0 {
 			result = name[i:]
 		}
 	case "LAST_EXT":
-		name := baseName(p)
+		name := BaseName(p)
 		if i := strings.LastIndexByte(name, '.'); i > 0 {
 			result = name[i:]
 		}
 	case "NAME_WE":
-		name := baseName(p)
+		name := BaseName(p)
 		if i := strings.IndexByte(name, '.'); i >= 0 {
 			name = name[:i]
 		}
 		result = name
 	case "NAME_WLE":
-		name := baseName(p)
+		name := BaseName(p)
 		if i := strings.LastIndexByte(name, '.'); i > 0 {
 			name = name[:i]
 		}
@@ -158,9 +158,9 @@ func cmdCMakePath(_ context.Context, e *evaluator, args []Arg) error {
 				set(out, "")
 			}
 		case "FILENAME":
-			set(out, baseName(value))
+			set(out, BaseName(value))
 		case "EXTENSION":
-			name := baseName(value)
+			name := BaseName(value)
 			if containsStr(v, "LAST_ONLY") {
 				if i := strings.LastIndexByte(name, '.'); i > 0 {
 					set(out, name[i:])
@@ -175,7 +175,7 @@ func cmdCMakePath(_ context.Context, e *evaluator, args []Arg) error {
 				set(out, "")
 			}
 		case "STEM":
-			name := baseName(value)
+			name := BaseName(value)
 			if containsStr(v, "LAST_ONLY") {
 				if i := strings.LastIndexByte(name, '.'); i > 0 {
 					name = name[:i]
@@ -196,11 +196,11 @@ func cmdCMakePath(_ context.Context, e *evaluator, args []Arg) error {
 	case "HAS_ROOT_DIRECTORY", "HAS_ROOT_PATH":
 		set(v[2], boolVarOnOff(hasRootDirectory(value)))
 	case "HAS_FILENAME":
-		set(v[2], boolVarOnOff(baseName(value) != ""))
+		set(v[2], boolVarOnOff(BaseName(value) != ""))
 	case "HAS_EXTENSION":
-		set(v[2], boolVarOnOff(strings.Contains(baseName(value), ".")))
+		set(v[2], boolVarOnOff(strings.Contains(BaseName(value), ".")))
 	case "HAS_STEM":
-		set(v[2], boolVarOnOff(baseName(value) != ""))
+		set(v[2], boolVarOnOff(BaseName(value) != ""))
 	case "HAS_PARENT_PATH":
 		set(v[2], boolVarOnOff(dirOf(value) != ""))
 	case "IS_ABSOLUTE":
@@ -245,7 +245,7 @@ func cmdCMakePath(_ context.Context, e *evaluator, args []Arg) error {
 		}
 		set(outVar(name), path.Join(dirOf(value), v[2]))
 	case "REMOVE_EXTENSION":
-		n := baseName(value)
+		n := BaseName(value)
 		if i := strings.IndexByte(n, '.'); i > 0 {
 			n = n[:i]
 		}
@@ -254,7 +254,7 @@ func cmdCMakePath(_ context.Context, e *evaluator, args []Arg) error {
 		if len(v) < 3 {
 			return e.fatalf("cmake_path REPLACE_EXTENSION called with incorrect number of arguments")
 		}
-		n := baseName(value)
+		n := BaseName(value)
 		if i := strings.IndexByte(n, '.'); i > 0 {
 			n = n[:i]
 		}

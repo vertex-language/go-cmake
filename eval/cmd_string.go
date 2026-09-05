@@ -414,14 +414,15 @@ func strMakeCIdentifier(e *evaluator, v []string) error {
 	if len(v) < 3 {
 		return e.fatalf("string MAKE_C_IDENTIFIER called with incorrect number of arguments")
 	}
-	e.state.SetVar(v[2], makeCIdentifier(v[1]))
+	e.state.SetVar(v[2], MakeCIdentifier(v[1]))
 	return nil
 }
 
-// makeCIdentifier converts a string into a valid C identifier: every character
+// MakeCIdentifier converts a string into a valid C identifier: every character
 // that cannot appear in one becomes an underscore, and a leading digit gets an
-// underscore in front of it.
-func makeCIdentifier(s string) string {
+// underscore in front of it. The generator needs the same rule to name a
+// target's object directory, so it is exported rather than copied.
+func MakeCIdentifier(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {

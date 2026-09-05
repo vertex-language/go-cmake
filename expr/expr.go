@@ -40,7 +40,7 @@ func ExpandArg(arg ast.Arg, lookup Lookup) []string {
 	case *ast.UnquotedArg:
 		s := expandString(a.Lit, lookup, true)
 		// Split on unescaped semicolons.
-		parts := splitList(s)
+		parts := SplitList(s)
 		// Filter empty strings (unquoted empty args vanish).
 		out := parts[:0]
 		for _, p := range parts {
@@ -76,7 +76,7 @@ func ExpandString(s string, lookup Lookup) string {
 // ExpandUnquoted expands a raw unquoted string and returns the resulting list elements.
 func ExpandUnquoted(s string, lookup Lookup) []string {
 	expanded := expandString(s, lookup, true)
-	return splitList(expanded)
+	return SplitList(expanded)
 }
 
 // ----------------------------------------------------------------------------
@@ -245,9 +245,15 @@ func scanGenex(s string, start int) int {
 	return i
 }
 
-// splitList splits a CMake list string on unescaped semicolons.
-// The sequence \; is treated as a literal semicolon in the element value.
-func splitList(s string) []string {
+// SplitList splits a CMake list value into its elements on unescaped
+// semicolons; the sequence \; is a literal semicolon within an element. An
+// empty string is an empty list, not a list holding one empty element.
+//
+// This and [JoinList] are the whole of CMake's list type: a list is a string,
+// and these two functions are what make it behave like a sequence. They live
+// here, with the rest of the argument syntax, so that there is one answer to
+// what a semicolon means.
+func SplitList(s string) []string {
 	if s == "" {
 		return nil
 	}

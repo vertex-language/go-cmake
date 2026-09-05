@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/vertex-language/go-cmake/run"
 )
 
 // `cmake -E` is CMake's portable shell. It exists because a generated build
@@ -463,15 +465,13 @@ func removeEnv(env []string, name string) []string {
 	return out
 }
 
-// runIn executes a command, returning its exit status.
+// runIn executes a command, returning its exit status. `cmake -E chdir dir
+// prog` reports what prog reported, so a non-zero exit is passed through rather
+// than collapsed into a generic failure.
 func runIn(ctx context.Context, e Env, dir string, argv []string, fail func(string, ...any) int) int {
-	runner := cmakeRunner()
-	err := runner.Run(ctx, command(argv, dir, e))
-	if err == nil {
-		return 0
+	code, err := run.OS().Run(ctx, command(argv, dir, e))
+	if err != nil {
+		return fail("%v", err)
 	}
-	if code, ok := exitStatus(err); ok {
-		return code
-	}
-	return fail("%v", err)
+	return code
 }

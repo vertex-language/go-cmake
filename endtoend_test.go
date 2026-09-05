@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	cmake "github.com/vertex-language/go-cmake"
+	"github.com/vertex-language/go-cmake/run"
 	"github.com/vertex-language/go-cmake/toolchain"
 )
 
@@ -54,7 +55,7 @@ func buildProject(t *testing.T, source string) (string, *cmake.BuildResult) {
 		Source: source,
 		Binary: binary,
 		FS:     cmake.RealFS(""),
-		Runner: cmake.RealRunner(),
+		Runner: run.OS(),
 		Out:    &out,
 		Err:    &out,
 	})
@@ -334,7 +335,7 @@ target_link_libraries(three PRIVATE two one)
 		Source: src,
 		Binary: filepath.Join(src, "_build"),
 		FS:     cmake.RealFS(""),
-		Runner: cmake.RealRunner(),
+		Runner: run.OS(),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -69,3 +69,12 @@ func hasPathPrefix(target, base string) bool {
 	}
 	return target[:len(base)] == base
 }
+
+// BaseName returns the final component of a path.
+func BaseName(p string) string {
+	p = slashPath(p)
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}

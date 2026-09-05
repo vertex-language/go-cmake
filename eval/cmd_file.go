@@ -499,7 +499,7 @@ func fileCopy(e *evaluator, v []string) error {
 		if err != nil {
 			return e.fatalf("file %s cannot read %s", v[0], f)
 		}
-		if err := e.fs.WriteFile(joinPath(destDir, baseName(src)), data); err != nil {
+		if err := e.fs.WriteFile(joinPath(destDir, BaseName(src)), data); err != nil {
 			return e.fatalf("file %s cannot write into %s: %v", v[0], dest, err)
 		}
 	}

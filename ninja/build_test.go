@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/vertex-language/go-cmake/run"
 	"time"
 )
 
@@ -22,7 +24,8 @@ type recordingRunner struct {
 	delay   time.Duration
 }
 
-func (r *recordingRunner) Run(ctx context.Context, cmd, dir string, stdout, stderr io.Writer) error {
+func (r *recordingRunner) Run(ctx context.Context, c run.Command) (int, error) {
+	cmd := c.Line
 	if r.delay > 0 {
 		time.Sleep(r.delay)
 	}
@@ -32,18 +35,18 @@ func (r *recordingRunner) Run(ctx context.Context, cmd, dir string, stdout, stde
 	for key, out := range r.produce {
 		if strings.Contains(cmd, key) {
 			if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
-				return err
+				return -1, err
 			}
 			// A distinct timestamp per write; a filesystem with one-second
 			// resolution would otherwise make a fresh output look stale.
 			if err := os.WriteFile(out, []byte(cmd), 0644); err != nil {
-				return err
+				return -1, err
 			}
 			now := time.Now().Add(time.Second)
 			_ = os.Chtimes(out, now, now)
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (r *recordingRunner) ran() []string {
@@ -53,7 +56,7 @@ func (r *recordingRunner) ran() []string {
 }
 
 // buildFile writes a build.ninja and returns the driver for it.
-func buildFile(t *testing.T, dir, src string, runner CommandRunner) *Driver {
+func buildFile(t *testing.T, dir, src string, runner run.Runner) *Driver {
 	t.Helper()
 	path := filepath.Join(dir, "build.ninja")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {

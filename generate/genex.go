@@ -345,7 +345,7 @@ func (c *genexContext) evalOne(inner string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return baseName(p), nil
+		return eval.BaseName(p), nil
 	case "TARGET_FILE_DIR", "TARGET_LINKER_FILE_DIR":
 		p, err := c.targetFile(args, keyword == "TARGET_LINKER_FILE_DIR")
 		if err != nil {
@@ -357,7 +357,7 @@ func (c *genexContext) evalOne(inner string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return stripExt(baseName(p)), nil
+		return stripExt(eval.BaseName(p)), nil
 	case "TARGET_PROPERTY":
 		return c.targetProperty(args)
 	case "TARGET_OBJECTS":
@@ -379,7 +379,7 @@ func (c *genexContext) evalOne(inner string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return makeCIdentifier(v), nil
+		return eval.MakeCIdentifier(v), nil
 	case "PATH_EQUAL":
 		parts, err := c.evalArgs(args)
 		if err != nil {
@@ -582,14 +582,6 @@ func matchesAny(args, value string) bool {
 		}
 	}
 	return false
-}
-
-func baseName(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		return p[i+1:]
-	}
-	return p
 }
 
 func dirName(p string) string {

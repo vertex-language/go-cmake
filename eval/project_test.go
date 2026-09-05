@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/vertex-language/go-cmake/eval"
+	"github.com/vertex-language/go-cmake/run"
 )
 
 // Project-mode differential tests configure a whole source tree rather than
@@ -48,7 +49,7 @@ func configureReal(t *testing.T, source string) string {
 func configureOurs(t *testing.T, source string) string {
 	t.Helper()
 	state := eval.NewState(filepath.ToSlash(source), filepath.ToSlash(filepath.Join(source, "_ours")), os.Environ())
-	state.Runner = eval.OSRunner()
+	state.Runner = run.OS()
 	var sb strings.Builder
 	state.LogSink = func(mode, text string) {
 		switch mode {

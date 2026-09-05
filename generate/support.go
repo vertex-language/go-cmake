@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/vertex-language/go-cmake/eval"
 )
@@ -74,18 +73,3 @@ func shellPath(p string) string {
 }
 
 // makeCIdentifier converts a string into a valid C identifier.
-func makeCIdentifier(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	out := b.String()
-	if out != "" && out[0] >= '0' && out[0] <= '9' {
-		return "_" + out
-	}
-	return out
-}

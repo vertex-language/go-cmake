@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/vertex-language/go-cmake/ast"
+	"github.com/vertex-language/go-cmake/run"
 	"github.com/vertex-language/go-cmake/token"
 )
 
@@ -104,7 +105,7 @@ type State struct {
 
 	// Runner executes processes for execute_process. A nil Runner makes those
 	// commands report an error rather than silently succeed.
-	Runner Runner
+	Runner run.Runner
 
 	// Unsupported records commands that were accepted but could not be honoured,
 	// so a caller can tell an incomplete configure from a complete one.

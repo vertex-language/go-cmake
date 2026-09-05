@@ -16,6 +16,7 @@ import (
 	cmake "github.com/vertex-language/go-cmake"
 	"github.com/vertex-language/go-cmake/build"
 	"github.com/vertex-language/go-cmake/eval"
+	"github.com/vertex-language/go-cmake/run"
 )
 
 // Env is everything the command line touches outside itself.
@@ -227,7 +228,7 @@ func runConfigure(ctx context.Context, e Env, o *configureOptions) int {
 		Jobs:      o.jobs,
 		Flags:     o.flags,
 		FS:        cmake.RealFS(e.Dir),
-		Runner:    cmake.RealRunner(),
+		Runner:    run.OS(),
 		Out:       e.Out,
 		Err:       e.Err,
 	})
@@ -243,7 +244,7 @@ func runConfigure(ctx context.Context, e Env, o *configureOptions) int {
 	}
 	fmt.Fprintln(e.Out, "-- Configuring done")
 	fmt.Fprintln(e.Out, "-- Generating done")
-	fmt.Fprintf(e.Out, "-- Build files have been written to: %s\n", dirOf(gen.BuildFile))
+	fmt.Fprintf(e.Out, "-- Build files have been written to: %s\n", parentDir(gen.BuildFile))
 	return 0
 }
 
@@ -255,7 +256,7 @@ func runScript(ctx context.Context, e Env, o *configureOptions) int {
 		dir = "."
 	}
 	state := eval.NewState(dir, dir, e.Env)
-	state.Runner = eval.OSRunner()
+	state.Runner = run.OS()
 	state.LogSink = func(mode, text string) {
 		switch mode {
 		case "":
@@ -332,7 +333,7 @@ func runBuild(ctx context.Context, e Env, args []string) int {
 		return 1
 	}
 
-	cfg.Runner = bridgeRunner{cmake.RealRunner()}
+	cfg.Runner = run.OS()
 	res, err := build.Build(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(e.Err, "%v\n", err)
@@ -344,44 +345,16 @@ func runBuild(ctx context.Context, e Env, args []string) int {
 	return 0
 }
 
-// runInstall copies a built tree into its destination.
+// runInstall reports that installing is not implemented.
+//
+// install() rules are collected during configure and are readable from the
+// configure state, but nothing writes them into the build tree, so there is
+// nothing here to act on. This used to shell out to a `cmake` binary found on
+// PATH, which quietly handed the job to a different implementation of CMake
+// and failed confusingly when none was installed. Saying so is better.
 func runInstall(ctx context.Context, e Env, args []string) int {
-	cfg := build.InstallConfig{Out: e.Out, Err: e.Err, Env: e.Env}
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--prefix":
-			if i+1 < len(args) {
-				cfg.Prefix = args[i+1]
-				i++
-			}
-		case "--component":
-			if i+1 < len(args) {
-				cfg.Component = args[i+1]
-				i++
-			}
-		case "--config":
-			if i+1 < len(args) {
-				cfg.Config = args[i+1]
-				i++
-			}
-		case "--strip":
-			cfg.Strip = true
-		default:
-			if !strings.HasPrefix(args[i], "-") && cfg.BinaryDir == "" {
-				cfg.BinaryDir = args[i]
-			}
-		}
-	}
-	if cfg.BinaryDir == "" {
-		fmt.Fprintln(e.Err, "CMake Error: --install requires a build directory")
-		return 1
-	}
-	cfg.Runner = bridgeRunner{cmake.RealRunner()}
-	if err := build.Install(ctx, cfg); err != nil {
-		fmt.Fprintf(e.Err, "CMake Error: %v\n", err)
-		return 1
-	}
-	return 0
+	fmt.Fprintln(e.Err, "CMake Error: --install is not implemented by this cmake")
+	return 1
 }
 
 // report prints an error the way CMake does, without the Go error decoration.
@@ -393,28 +366,14 @@ func report(w io.Writer, err error) {
 	fmt.Fprintf(w, "CMake Error: %v\n", err)
 }
 
-func dirOf(p string) string {
+// parentDir returns the directory to create for a path being written. It is
+// deliberately not eval's dirOf: this one yields "." for a bare filename so the
+// result can be passed to MkdirAll, where CMake's PARENT_PATH semantics yield
+// "" and "/" for the same inputs.
+func parentDir(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
 	if i := strings.LastIndexByte(p, '/'); i > 0 {
 		return p[:i]
 	}
 	return "."
-}
-
-// bridgeRunner adapts the package's Runner to the build package's, carrying the
-// raw command line across so that a shell command survives the trip.
-type bridgeRunner struct {
-	cmake.Runner
-}
-
-func (b bridgeRunner) Run(ctx context.Context, cmd build.Command) error {
-	return b.Runner.Run(ctx, cmake.Command{
-		Argv:   cmd.Argv,
-		Line:   cmd.Line,
-		Dir:    cmd.Dir,
-		Env:    cmd.Env,
-		Stdin:  cmd.Stdin,
-		Stdout: cmd.Stdout,
-		Stderr: cmd.Stderr,
-	})
 }

@@ -3,12 +3,10 @@ package cmake
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,6 +16,7 @@ import (
 	"github.com/vertex-language/go-cmake/eval"
 	"github.com/vertex-language/go-cmake/generate"
 	"github.com/vertex-language/go-cmake/preset"
+	"github.com/vertex-language/go-cmake/run"
 	"github.com/vertex-language/go-cmake/toolchain"
 )
 
@@ -41,7 +40,7 @@ type Config struct {
 	Flags     Flags
 
 	FS     FS
-	Runner Runner
+	Runner run.Runner
 	Out    io.Writer
 	Err    io.Writer
 
@@ -58,28 +57,6 @@ type FS interface {
 	Remove(name string) error
 	Symlink(old, new string) error
 	Stat(name string) (fs.FileInfo, error)
-}
-
-type Runner interface {
-	Run(ctx context.Context, cmd Command) error
-}
-
-type Command struct {
-	Argv   []string
-	Dir    string
-	Env    []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-
-	// Line is set when the command is a shell command line rather than an
-	// argument vector, which is what a build file's commands are. It exists
-	// because cmd.exe does not parse its argument the way the C runtime quotes
-	// it: a compiler path containing a space cannot be passed through an argv
-	// to `cmd /c` without being mangled. A Runner that executes the command
-	// should prefer Line when it is set; Argv is a best-effort rendering for a
-	// Runner that only wants to inspect or log it.
-	Line string
 }
 
 type ConfigureResult struct {
@@ -159,46 +136,6 @@ func (e evalFS) MkdirAll(name string) error {
 	return e.FS.MkdirAll(name, 0755)
 }
 
-// evalRunner adapts the package's Runner, which reports only an error, to the
-// one eval needs, which must distinguish a non-zero exit from a failure to
-// start: execute_process treats those differently.
-type evalRunner struct {
-	Runner
-}
-
-func (r evalRunner) Run(ctx context.Context, cmd eval.Command) (int, error) {
-	if r.Runner == nil {
-		return -1, errNoRunner
-	}
-	err := r.Runner.Run(ctx, Command{
-		Argv:   cmd.Argv,
-		Dir:    cmd.Dir,
-		Env:    cmd.Env,
-		Stdin:  cmd.Stdin,
-		Stdout: cmd.Stdout,
-		Stderr: cmd.Stderr,
-	})
-	if err == nil {
-		return 0, nil
-	}
-	if code, ok := exitCode(err); ok {
-		return code, nil
-	}
-	return -1, err
-}
-
-var errNoRunner = errors.New("no process runner configured")
-
-// exitCode extracts a process exit status from an error, so that a command
-// that ran and failed is reported as an exit code rather than as an error.
-func exitCode(err error) (int, bool) {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode(), true
-	}
-	return 0, false
-}
-
 // Configure runs the configure phase: it evaluates the CMakeLists.txt tree and
 // returns the state it declared.
 func (c *CMake) Configure(ctx context.Context) (*ConfigureResult, error) {
@@ -238,7 +175,7 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 	}
 
 	state := eval.NewState(filepath.ToSlash(source), filepath.ToSlash(binary), c.cfg.Env)
-	state.Runner = evalRunner{c.cfg.Runner}
+	state.Runner = c.cfg.Runner
 	if c.cfg.Out != nil {
 		out := c.cfg.Out
 		state.LogSink = func(mode, text string) {
@@ -406,7 +343,7 @@ func (c *CMake) Build(ctx context.Context) (*BuildResult, error) {
 		Err:       c.cfg.Err,
 	}
 	if c.cfg.Runner != nil {
-		bcfg.Runner = &bridgeRunner{c.cfg.Runner}
+		bcfg.Runner = c.cfg.Runner
 	}
 
 	res, err := build.Build(ctx, bcfg)
@@ -414,12 +351,4 @@ func (c *CMake) Build(ctx context.Context) (*BuildResult, error) {
 		return nil, err
 	}
 	return &BuildResult{Built: res.Built, UpToDate: res.UpToDate, Failed: res.Failed}, err
-}
-
-type bridgeRunner struct {
-	Runner
-}
-
-func (b *bridgeRunner) Run(ctx context.Context, cmd build.Command) error {
-	return b.Runner.Run(ctx, Command(cmd))
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vertex-language/go-cmake/run"
 )
 
 // Driver builds a parsed Ninja graph in this process.
@@ -28,18 +30,17 @@ type Driver struct {
 	Verbose bool
 	DryRun  bool
 
-	FS      FS
-	Runner  CommandRunner
+	FS     FS
+	Runner run.Runner
+
+	// Env is the environment every build command runs with. An empty Env
+	// means the runner inherits this process's.
+	Env     []string
 	Log     *Log
 	LogPath string
 
 	Out io.Writer
 	Err io.Writer
-}
-
-// CommandRunner executes one shell command line.
-type CommandRunner interface {
-	Run(ctx context.Context, cmd string, dir string, stdout, stderr io.Writer) error
 }
 
 // Result summarises a build.
@@ -50,19 +51,12 @@ type Result struct {
 	Errors   []string
 }
 
-// shellRunner runs commands through the platform's shell, which is what ninja
-// does: a command line in a build file is shell syntax, not an argv.
-type shellRunner struct{}
-
-// ShellRunner returns the default command runner.
-func ShellRunner() CommandRunner { return shellRunner{} }
-
-func (shellRunner) Run(ctx context.Context, cmd, dir string, stdout, stderr io.Writer) error {
-	c := shellCommand(ctx, cmd)
-	c.Dir = dir
-	c.Stdout = stdout
-	c.Stderr = stderr
-	return c.Run()
+// shellArgv renders a build line as the argument vector that would run it.
+func shellArgv(line string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", line}
+	}
+	return []string{"/bin/sh", "-c", line}
 }
 
 // node is one file in the graph.
@@ -104,7 +98,7 @@ func (d *Driver) Build(ctx context.Context) (*Result, error) {
 		d.FS = OSFS()
 	}
 	if d.Runner == nil {
-		d.Runner = ShellRunner()
+		d.Runner = run.OS()
 	}
 	if d.Out == nil {
 		d.Out = os.Stdout
@@ -558,7 +552,20 @@ func (d *Driver) execute(ctx context.Context, p *plan, index, total int) error {
 	}
 
 	var buf strings.Builder
-	err := d.Runner.Run(ctx, p.command, "", &buf, &buf)
+	code, err := d.Runner.Run(ctx, run.Command{
+		Line: p.command,
+		// A build line is shell syntax -- it may contain a redirection, an &&
+		// chain, or quoting only a shell resolves -- so Line is what must be
+		// executed. Argv is filled in as well for a Runner that only inspects
+		// or logs commands and would rather not parse shell.
+		Argv:   shellArgv(p.command),
+		Env:    d.Env,
+		Stdout: &buf,
+		Stderr: &buf,
+	})
+	if err == nil && code != 0 {
+		err = fmt.Errorf("exit status %d", code)
+	}
 	out := buf.String()
 
 	// MSVC reports the headers it opened on its own output rather than in a

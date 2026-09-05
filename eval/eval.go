@@ -223,30 +223,8 @@ func (e *evaluator) fatalf(format string, a ...any) error {
 // single most common operation in the language, so both live here rather than
 // being re-derived in every command.
 
-// SplitList splits a CMake list value into its elements. An empty string is an
-// empty list, not a list of one empty element.
-func SplitList(v string) []string {
-	if v == "" {
-		return nil
-	}
-	var out []string
-	var cur strings.Builder
-	for i := 0; i < len(v); i++ {
-		if v[i] == '\\' && i+1 < len(v) && v[i+1] == ';' {
-			cur.WriteByte(';')
-			i++
-			continue
-		}
-		if v[i] == ';' {
-			out = append(out, cur.String())
-			cur.Reset()
-			continue
-		}
-		cur.WriteByte(v[i])
-	}
-	out = append(out, cur.String())
-	return out
-}
+// SplitList splits a CMake list value into its elements.
+func SplitList(v string) []string { return expr.SplitList(v) }
 
 // JoinList joins elements into a CMake list value.
 func JoinList(elems []string) string { return expr.JoinList(elems) }

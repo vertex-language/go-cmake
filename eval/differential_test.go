@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/vertex-language/go-cmake/eval"
+	"github.com/vertex-language/go-cmake/run"
 )
 
 // The differential tests run a CMake script through this implementation and
@@ -67,7 +68,7 @@ func runOurs(t *testing.T, dir, script string) string {
 		t.Fatal(err)
 	}
 	state := eval.NewState(filepath.ToSlash(dir), filepath.ToSlash(dir), os.Environ())
-	state.Runner = eval.OSRunner()
+	state.Runner = run.OS()
 	state.SetVar("CMAKE_COMMAND", cmakePath)
 	var sb strings.Builder
 	state.LogSink = func(mode, text string) {

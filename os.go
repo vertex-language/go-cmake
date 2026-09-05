@@ -1,11 +1,8 @@
 package cmake
 
 import (
-	"context"
-	"errors"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -59,28 +56,4 @@ func (r *realFS) Symlink(old, new string) error {
 
 func (r *realFS) Stat(name string) (fs.FileInfo, error) {
 	return os.Stat(r.path(name))
-}
-
-type realRunner struct{}
-
-func RealRunner() Runner {
-	return &realRunner{}
-}
-
-func (r *realRunner) Run(ctx context.Context, cmd Command) error {
-	var c *exec.Cmd
-	if cmd.Line != "" {
-		c = shellCommand(ctx, cmd.Line)
-	} else {
-		if len(cmd.Argv) == 0 {
-			return errors.New("cmake: empty command")
-		}
-		c = exec.CommandContext(ctx, cmd.Argv[0], cmd.Argv[1:]...)
-	}
-	c.Dir = cmd.Dir
-	c.Env = cmd.Env
-	c.Stdin = cmd.Stdin
-	c.Stdout = cmd.Stdout
-	c.Stderr = cmd.Stderr
-	return c.Run()
 }
