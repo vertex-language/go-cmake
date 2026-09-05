@@ -95,19 +95,36 @@ func runToolMode(ctx context.Context, e Env, args []string) int {
 		return 0
 
 	case "copy":
-		return toolCopy(rest, false, fail)
-
+		return toolCopy(rest, copyAlways, fail)
 	case "copy_if_different":
-		return toolCopy(rest, true, fail)
+		return toolCopy(rest, copyIfDifferent, fail)
+	case "copy_if_newer":
+		return toolCopy(rest, copyIfNewer, fail)
 
 	case "copy_directory":
+		return toolCopyDirectory(rest, copyAlways, fail)
+	case "copy_directory_if_different":
+		return toolCopyDirectory(rest, copyIfDifferent, fail)
+	case "copy_directory_if_newer":
+		return toolCopyDirectory(rest, copyIfNewer, fail)
+
+	case "create_hardlink":
 		if len(rest) != 2 {
-			return fail("copy_directory expects a source and a destination")
+			return fail("create_hardlink expects two arguments")
 		}
-		if err := copyTree(rest[0], rest[1]); err != nil {
-			return fail("%v", err)
+		if err := os.Link(rest[0], rest[1]); err != nil {
+			return fail("failed to create hard link: %v", err)
 		}
 		return 0
+
+	// Commands cmake has that this one does not. Naming them is what keeps a
+	// generated build rule that uses one from failing as a typo.
+	case "tar":
+		return fail("tar is not implemented by this cmake")
+	case "bin2c":
+		return fail("bin2c is not implemented by this cmake")
+	case "delete_regv", "write_regv", "env_vs8_wince", "env_vs9_wince":
+		return fail("%s is not implemented by this cmake", cmd)
 
 	case "rename":
 		if len(rest) != 2 {
@@ -135,6 +152,9 @@ func runToolMode(ctx context.Context, e Env, args []string) int {
 		return 0
 
 	case "cat":
+		if len(rest) > 0 && rest[0] == "--" {
+			rest = rest[1:]
+		}
 		for _, f := range rest {
 			data, err := os.ReadFile(f)
 			if err != nil {
@@ -213,17 +233,22 @@ Available commands:
   capabilities                print capabilities in JSON
   chdir <dir> <cmd> [args]    run a command in a directory
   compare_files <a> <b>       exit 0 if the files are identical
-  copy <files>... <dest>      copy files
+  copy <files>... <dest> | -t <dest> <files>...
   copy_if_different <files>... <dest>
-  copy_directory <src> <dst>  copy a directory tree
+  copy_if_newer <files>... <dest>
+  copy_directory <dirs>... <dest>
+  copy_directory_if_different <dirs>... <dest>
+  copy_directory_if_newer <dirs>... <dest>
   create_symlink <old> <new>
+  create_hardlink <old> <new>
   echo [args]...              print arguments
   echo_append [args]...       print without a trailing newline
-  env [NAME=VALUE]... <cmd>   run a command with a modified environment
+  env [--unset=NAME]... [NAME=VALUE]... <cmd>
+                              run a command with a modified environment
   environment                 print the environment
   false                       exit non-zero
   make_directory <dirs>...    create directories
-  md5sum|sha1sum|sha256sum|sha512sum <files>...
+  md5sum|sha1sum|sha224sum|sha256sum|sha384sum|sha512sum <files>...
   remove [-f] <files>...      remove files
   remove_directory <dirs>...  remove directories
   rename <old> <new>
@@ -270,11 +295,34 @@ func toolRemove(e Env, cmd string, args []string, fail func(string, ...any) int)
 
 // toolCopy copies files to a destination, which is a directory when more than
 // one source is named.
-func toolCopy(args []string, onlyIfDifferent bool, fail func(string, ...any) int) int {
+// copyMode says when a copy actually writes.
+type copyMode int
+
+const (
+	copyAlways copyMode = iota
+	copyIfDifferent
+	copyIfNewer
+)
+
+// splitCopyArgs separates the sources from the destination. cmake accepts two
+// spellings -- trailing destination, or `-t <destination>` first -- and the
+// second exists so that a single source can go to a directory without the
+// command being ambiguous about which argument is which.
+func splitCopyArgs(args []string) (sources []string, dest string, ok bool) {
+	if len(args) >= 2 && args[0] == "-t" {
+		return args[2:], args[1], len(args) > 2
+	}
 	if len(args) < 2 {
+		return nil, "", false
+	}
+	return args[:len(args)-1], args[len(args)-1], true
+}
+
+func toolCopy(args []string, mode copyMode, fail func(string, ...any) int) int {
+	sources, dest, ok := splitCopyArgs(args)
+	if !ok {
 		return fail("copy expects at least a source and a destination")
 	}
-	sources, dest := args[:len(args)-1], args[len(args)-1]
 	destIsDir := len(sources) > 1
 	if fi, err := os.Stat(dest); err == nil && fi.IsDir() {
 		destIsDir = true
@@ -284,7 +332,20 @@ func toolCopy(args []string, onlyIfDifferent bool, fail func(string, ...any) int
 		if destIsDir {
 			target = filepath.Join(dest, filepath.Base(src))
 		}
-		if err := copyFile(src, target, onlyIfDifferent); err != nil {
+		if err := copyFile(src, target, mode); err != nil {
+			return fail("%v", err)
+		}
+	}
+	return 0
+}
+
+func toolCopyDirectory(args []string, mode copyMode, fail func(string, ...any) int) int {
+	sources, dest, ok := splitCopyArgs(args)
+	if !ok {
+		return fail("copy_directory expects at least a source and a destination")
+	}
+	for _, src := range sources {
+		if err := copyTree(src, dest, mode); err != nil {
 			return fail("%v", err)
 		}
 	}
@@ -295,13 +356,22 @@ func toolCopy(args []string, onlyIfDifferent bool, fail func(string, ...any) int
 // already holds the same bytes. Skipping matters: rewriting an unchanged
 // generated header would advance its timestamp and rebuild everything that
 // includes it.
-func copyFile(src, dst string, onlyIfDifferent bool) error {
+func copyFile(src, dst string, mode copyMode) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("failed to copy %q: %v", src, err)
 	}
-	if onlyIfDifferent {
+	switch mode {
+	case copyIfDifferent:
 		if existing, err := os.ReadFile(dst); err == nil && string(existing) == string(data) {
+			return nil
+		}
+	case copyIfNewer:
+		// Skipping an equal timestamp as well as an older one is what makes a
+		// second run of a generated rule do nothing.
+		srcInfo, err1 := os.Stat(src)
+		dstInfo, err2 := os.Stat(dst)
+		if err1 == nil && err2 == nil && !srcInfo.ModTime().After(dstInfo.ModTime()) {
 			return nil
 		}
 	}
@@ -311,17 +381,17 @@ func copyFile(src, dst string, onlyIfDifferent bool) error {
 		}
 	}
 	info, err := os.Stat(src)
-	mode := fs.FileMode(0644)
+	perm := fs.FileMode(0644)
 	if err == nil {
-		mode = info.Mode().Perm()
+		perm = info.Mode().Perm()
 	}
-	if err := os.WriteFile(dst, data, mode); err != nil {
+	if err := os.WriteFile(dst, data, perm); err != nil {
 		return fmt.Errorf("failed to write %q: %v", dst, err)
 	}
 	return nil
 }
 
-func copyTree(src, dst string) error {
+func copyTree(src, dst string, mode copyMode) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -334,7 +404,7 @@ func copyTree(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
-		return copyFile(path, target, false)
+		return copyFile(path, target, mode)
 	})
 }
 

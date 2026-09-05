@@ -96,7 +96,7 @@ observable stage here.
 
 | Phase | What happens |
 |---|---|
-| **Configure** | The CMake language is read and evaluated. Targets, sources, dependencies, compile flags, tests, and install rules are declared. Nothing is compiled. |
+| **Configure** | The CMake language is read and evaluated. Targets, sources, dependencies, compile flags, tests, and install rules are declared. The result is written to `CMakeCache.txt`, so a later run remembers what this one decided. Nothing is compiled. |
 | **Generate** | The configured state is resolved into a build graph — usage requirements propagated, generator expressions evaluated, link order computed — and written as `build.ninja`. Nothing is compiled. |
 | **Build** | The build graph is scheduled and executed. |
 
@@ -302,21 +302,21 @@ func Main(ctx context.Context, e Env) int
 
 | Mode | |
 |---|---|
-| configure | `-S` `-B` `-G` `-D` `-U` `--preset` `--toolchain` `--log-level` `-j` |
+| configure | `-S` `-B` `-G` `-C` `-D` `-U` `-T` `-A` `-N` `-L[A][H]` `-LR` `--preset` `--list-presets` `--toolchain` `--install-prefix` `--fresh` `--log-level` `-j` |
 | build | `cmake --build <dir> [--target ...] [--config ...] [-j N] [--clean-first] [--verbose]` |
-| install | `cmake --install` — reports that it is not implemented (see below) |
+| install | `cmake --install` — options are parsed, then it reports that it is not implemented (see below) |
 | script | `cmake -P <script.cmake> [args...]` — the language with no project and no cache |
 | tool | `cmake -E <command>` — the portable shell that generated build rules call |
 
 Flags that change only diagnostics (`--trace`, `-Wdev`, `--warn-uninitialized`,
-`--debug-find`, and friends) are accepted and ignored. So is `--fresh`, and in
-its case that is correct rather than merely convenient: this package writes no
-`CMakeCache.txt`, so nothing survives a run for `--fresh` to discard — every
-configure already starts from nothing.
+`--debug-find`, and friends) are accepted and ignored. Options CMake has that
+this package does not — `--workflow`, `--open`, `--find-package` — fail by name
+with a reason, which is a different thing from a typo and reads differently.
 
-An unrecognised flag is an error rather than a silent no-op, because a
-misspelled flag that is quietly discarded produces a build that is subtly not
-the one asked for.
+An unrecognised flag is still an error, because a misspelled flag that is
+quietly discarded produces a build that is subtly not the one asked for. A test
+holds this line: every option `cmake --help` publishes is run through this
+command line, and none of them may come back as unknown.
 
 ---
 

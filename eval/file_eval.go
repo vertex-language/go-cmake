@@ -140,3 +140,22 @@ func EvalScript(ctx context.Context, state *State, filesystem FS, path string) e
 	}
 	return err
 }
+
+// EvalCacheFile evaluates a -C initial-cache script into an existing state.
+//
+// It differs from [EvalScript] in what it leaves behind rather than in how it
+// runs: no CMAKE_SCRIPT_MODE_FILE is set, because the script is not the thing
+// being run -- it is a prelude to a project, whose whole purpose is the
+// set(... CACHE) calls it makes before the first CMakeLists.txt line executes.
+func EvalCacheFile(ctx context.Context, state *State, filesystem FS, path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	e := &evaluator{state: state, fs: filesystem}
+	err = e.evalFile(ctx, slashPath(abs))
+	if _, ok := err.(returnSignal); ok {
+		return nil
+	}
+	return err
+}

@@ -10,12 +10,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 
-	cmake "github.com/vertex-language/go-cmake"
-	"github.com/vertex-language/go-cmake/build"
 	"github.com/vertex-language/go-cmake/eval"
 	"github.com/vertex-language/go-cmake/run"
 )
@@ -50,13 +47,19 @@ func Main(ctx context.Context, e Env) int {
 		return runBuild(ctx, e, e.Args[1:])
 	case "--install":
 		return runInstall(ctx, e, e.Args[1:])
-	case "--version", "-version", "/V":
-		fmt.Fprintf(e.Out, "cmake version %s\n\n", Version)
-		fmt.Fprintln(e.Out, "CMake suite implemented in Go (github.com/vertex-language/go-cmake).")
-		return 0
-	case "--help", "-help", "-h", "/?":
+	case "--help", "-help", "-h", "-H", "-usage", "/?":
 		usage(e.Out)
 		return 0
+	}
+
+	// --version and the --help-* family take an optional =<value>, so they are
+	// matched on the name rather than the whole argument.
+	switch name, _, _ := strings.Cut(e.Args[0], "="); name {
+	case "--version", "-version", "/V", "/version":
+		return printVersion(e.Out, e.Args[0])
+	}
+	if code, handled := runHelp(e, e.Args); handled {
+		return code
 	}
 
 	opts, err := parseConfigure(e)
@@ -73,209 +76,39 @@ func Main(ctx context.Context, e Env) int {
 func usage(w io.Writer) {
 	fmt.Fprint(w, `Usage: cmake [options] <path-to-source>
        cmake [options] <path-to-existing-build>
+       cmake [options] -S <path-to-source> -B <path-to-build>
        cmake --build <dir> [options]
        cmake --install <dir> [options]
        cmake -E <command> [args]
-       cmake -P <script>
+       cmake -P <script> [args]
 
 Options:
-  -S <path>            source directory
-  -B <path>            build directory
-  -G <generator>       build system generator (Ninja)
-  -D <var>[:<type>]=<value>
-                       define a cache entry
-  -U <globbing_expr>   remove matching cache entries
-  --preset <name>      use a configure preset
-  --fresh              accepted; no cache is kept, so every run is fresh
-  --log-level <level>  ERROR, WARNING, NOTICE, STATUS, VERBOSE, DEBUG, TRACE
-  -j, --parallel <n>   number of parallel jobs
-  --version            print the version
+  -S <path>                    source directory
+  -B <path>                    build directory
+  -C <initial-cache>           pre-load a script to populate the cache
+  -D <var>[:<type>]=<value>    create or update a cache entry
+  -U <globbing_expr>           remove matching cache entries
+  -G <generator>               build system generator (Ninja)
+  --toolchain <file>           CMAKE_TOOLCHAIN_FILE
+  --install-prefix <dir>       CMAKE_INSTALL_PREFIX
+  --preset <name>              use a configure preset
+  --list-presets[=<type>]      list available presets
+  -L[A][H]                     list cache variables; A includes advanced,
+                               H includes help text
+  -LR[A][H] <regex>            list cache variables matching a regex
+  -N                           view mode: configure without generating
+  --log-level <level>          ERROR, WARNING, NOTICE, STATUS, VERBOSE, DEBUG, TRACE
+  --fresh                      discard the build directory's cache first
+  -j, --parallel [<n>]         number of parallel jobs
+  -E <command>                 command mode; run "cmake -E" for a summary
+  -P <script>                  script mode
+  --help-command-list          list the commands this cmake implements
+  --version[=json-v1]          print the version
+  -h, --help                   print this message
+
+Options that select diagnostics -- -W<category>, --trace, --debug-find,
+--warn-uninitialized and the rest -- are accepted and ignored.
 `)
-}
-
-// configureOptions is the parsed form of a configure command line.
-type configureOptions struct {
-	source    string
-	binary    string
-	generator string
-	preset    string
-	toolchain string
-	vars      map[string]string
-	unset     []string
-	jobs      int
-	flags     cmake.Flags
-	script    string
-	scriptArg []string
-}
-
-func parseConfigure(e Env) (*configureOptions, error) {
-	o := &configureOptions{vars: map[string]string{}, generator: "Ninja"}
-
-	// takes reports the value of a flag written either as "-S dir" or "-Sdir".
-	next := func(i *int, arg, name string) (string, error) {
-		if len(arg) > len(name) {
-			return arg[len(name):], nil
-		}
-		if *i+1 >= len(e.Args) {
-			return "", fmt.Errorf("%s must be followed by a value", name)
-		}
-		*i++
-		return e.Args[*i], nil
-	}
-
-	for i := 0; i < len(e.Args); i++ {
-		arg := e.Args[i]
-		var err error
-		switch {
-		case arg == "-P":
-			if i+1 >= len(e.Args) {
-				return nil, fmt.Errorf("-P must be followed by a script name")
-			}
-			o.script = e.Args[i+1]
-			o.scriptArg = e.Args[i+2:]
-			return o, nil
-
-		case strings.HasPrefix(arg, "-S"):
-			o.source, err = next(&i, arg, "-S")
-		case strings.HasPrefix(arg, "-B"):
-			o.binary, err = next(&i, arg, "-B")
-		case strings.HasPrefix(arg, "-G"):
-			o.generator, err = next(&i, arg, "-G")
-		case strings.HasPrefix(arg, "-U"):
-			var v string
-			v, err = next(&i, arg, "-U")
-			o.unset = append(o.unset, v)
-		case strings.HasPrefix(arg, "-D"):
-			var v string
-			if v, err = next(&i, arg, "-D"); err == nil {
-				name, value := parseCacheAssignment(v)
-				o.vars[name] = value
-			}
-		case arg == "--preset" || strings.HasPrefix(arg, "--preset="):
-			o.preset, err = nextLong(&i, e.Args, arg, "--preset")
-		case arg == "--toolchain" || strings.HasPrefix(arg, "--toolchain="):
-			o.toolchain, err = nextLong(&i, e.Args, arg, "--toolchain")
-		case arg == "--log-level" || strings.HasPrefix(arg, "--log-level="):
-			o.flags.LogLevel, err = nextLong(&i, e.Args, arg, "--log-level")
-		case arg == "-j" || arg == "--parallel":
-			var v string
-			if v, err = nextLong(&i, e.Args, arg, arg); err == nil {
-				o.jobs, err = strconv.Atoi(v)
-			}
-		case arg == "--fresh":
-			// Accepted and ignored, and correct rather than merely convenient:
-			// this package writes no CMakeCache.txt, so no state survives a run
-			// for --fresh to discard. Every configure already starts from
-			// nothing.
-		case arg == "-N", arg == "--warn-uninitialized", arg == "--trace",
-			arg == "--trace-expand", arg == "--debug-output",
-			arg == "-Wdev", arg == "-Wno-dev", arg == "-Werror=dev", arg == "-Wno-error=dev",
-			arg == "--no-warn-unused-cli", arg == "--check-system-vars", arg == "--debug-find":
-			// Accepted and ignored: these change diagnostics, not results.
-		case strings.HasPrefix(arg, "-"):
-			return nil, fmt.Errorf("unknown option %q", arg)
-		default:
-			// A bare path is the source directory, or an existing build
-			// directory being re-configured.
-			if o.source == "" {
-				o.source = arg
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	return o, nil
-}
-
-// nextLong reads the value of a long option in either "--x v" or "--x=v" form.
-func nextLong(i *int, args []string, arg, name string) (string, error) {
-	if v, ok := strings.CutPrefix(arg, name+"="); ok {
-		return v, nil
-	}
-	if *i+1 >= len(args) {
-		return "", fmt.Errorf("%s must be followed by a value", name)
-	}
-	*i++
-	return args[*i], nil
-}
-
-// parseCacheAssignment splits "NAME:TYPE=VALUE" into its name and value. The
-// type is accepted and discarded: it documents the entry for a GUI, and this
-// implementation stores every command-line entry as a string.
-func parseCacheAssignment(s string) (name, value string) {
-	name, value, _ = strings.Cut(s, "=")
-	if i := strings.IndexByte(name, ':'); i >= 0 {
-		name = name[:i]
-	}
-	return name, value
-}
-
-// runConfigure runs the configure and generate phases.
-func runConfigure(ctx context.Context, e Env, o *configureOptions) int {
-	if o.source == "" {
-		o.source = "."
-	}
-	if o.binary == "" {
-		o.binary = o.source
-	}
-
-	c, err := cmake.New(cmake.Config{
-		Source:    o.source,
-		Binary:    o.binary,
-		Generator: o.generator,
-		Preset:    o.preset,
-		Toolchain: o.toolchain,
-		Vars:      o.vars,
-		Env:       e.Env,
-		Jobs:      o.jobs,
-		Flags:     o.flags,
-		FS:        cmake.RealFS(e.Dir),
-		Runner:    run.OS(),
-		Out:       e.Out,
-		Err:       e.Err,
-	})
-	if err != nil {
-		fmt.Fprintf(e.Err, "CMake Error: %v\n", err)
-		return 1
-	}
-
-	gen, err := c.Generate(ctx)
-	if err != nil {
-		report(e.Err, err)
-		return 1
-	}
-	fmt.Fprintln(e.Out, "-- Configuring done")
-	fmt.Fprintln(e.Out, "-- Generating done")
-	fmt.Fprintf(e.Out, "-- Build files have been written to: %s\n", parentDir(gen.BuildFile))
-
-	// A project that probed its compiler with try_compile got FALSE, which may
-	// have switched off a feature it could in fact have used. The build files
-	// are still written -- they are the best answer available -- but a silent
-	// success here would let that go unnoticed until someone wondered why an
-	// optimisation never turned on.
-	if used := unsupported(gen.State); len(used) > 0 {
-		fmt.Fprintf(e.Err, "CMake Warning: this build was configured without %s;\n"+
-			"  any feature test relying on it reported failure.\n", strings.Join(used, " and "))
-	}
-	if len(gen.State.Errors) > 0 {
-		return 1
-	}
-	return 0
-}
-
-// unsupported lists, once each, the commands configure could not honour.
-func unsupported(state *eval.State) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, name := range state.Unsupported {
-		if !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // runScript runs `cmake -P script.cmake`: the language with no project, no
@@ -315,76 +148,6 @@ func runScript(ctx context.Context, e Env, o *configureOptions) int {
 		return 1
 	}
 	return 0
-}
-
-// runBuild drives an already-generated build tree.
-func runBuild(ctx context.Context, e Env, args []string) int {
-	cfg := build.Config{Generator: "Ninja", Out: e.Out, Err: e.Err, Env: e.Env}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--target" || arg == "-t":
-			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				cfg.Targets = append(cfg.Targets, args[i+1])
-				i++
-			}
-		case arg == "--config":
-			if i+1 < len(args) {
-				cfg.Config = args[i+1]
-				i++
-			}
-		case arg == "-j" || arg == "--parallel":
-			if i+1 < len(args) {
-				n, err := strconv.Atoi(args[i+1])
-				if err != nil {
-					fmt.Fprintf(e.Err, "CMake Error: --parallel expects a number, got %q\n", args[i+1])
-					return 1
-				}
-				cfg.Jobs = n
-				i++
-			}
-		case arg == "--clean-first":
-			cfg.CleanFirst = true
-		case arg == "--verbose" || arg == "-v":
-			cfg.Verbose = true
-		case arg == "--":
-			i = len(args) // the rest is for the build tool, which is us
-		case strings.HasPrefix(arg, "-"):
-			fmt.Fprintf(e.Err, "CMake Error: unknown --build option %q\n", arg)
-			return 1
-		default:
-			if cfg.BinaryDir == "" {
-				cfg.BinaryDir = arg
-			}
-		}
-	}
-	if cfg.BinaryDir == "" {
-		fmt.Fprintln(e.Err, "CMake Error: --build requires a build directory")
-		return 1
-	}
-
-	cfg.Runner = run.OS()
-	res, err := build.Build(ctx, cfg)
-	if err != nil {
-		fmt.Fprintf(e.Err, "%v\n", err)
-		return 1
-	}
-	if res != nil && res.Failed > 0 {
-		return 1
-	}
-	return 0
-}
-
-// runInstall reports that installing is not implemented.
-//
-// install() rules are collected during configure and are readable from the
-// configure state, but nothing writes them into the build tree, so there is
-// nothing here to act on. This used to shell out to a `cmake` binary found on
-// PATH, which quietly handed the job to a different implementation of CMake
-// and failed confusingly when none was installed. Saying so is better.
-func runInstall(ctx context.Context, e Env, args []string) int {
-	fmt.Fprintln(e.Err, "CMake Error: --install is not implemented by this cmake")
-	return 1
 }
 
 // report prints an error the way CMake does, without the Go error decoration.

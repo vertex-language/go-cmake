@@ -133,3 +133,12 @@ func OldBehaviorAvailable(name string) (available bool, introduced string) {
 	}
 	return CompareVersions(intro, oldBehaviorRemovedBefore) >= 0, intro
 }
+
+// PolicyNames returns every policy this implementation knows, in order.
+func PolicyNames() []string {
+	names := make([]string, 0, maxPolicy+1)
+	for n := 0; n <= maxPolicy; n++ {
+		names = append(names, policyName(n))
+	}
+	return names
+}

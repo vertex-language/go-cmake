@@ -29,6 +29,11 @@ type Flags struct {
 	// LogLevel selects the message() modes that reach Out. "VERBOSE" also
 	// makes the build print each command it runs.
 	LogLevel string
+
+	// Fresh discards the build directory's existing CMakeCache.txt before
+	// configuring, so the run starts from the command line and the project
+	// alone.
+	Fresh bool
 }
 
 type Config struct {
@@ -38,9 +43,21 @@ type Config struct {
 	Toolchain string
 	Preset    string
 	Vars      map[string]string
-	Env       []string
-	Jobs      int
-	Flags     Flags
+
+	// Unset holds the globbing expressions given to -U. Matching entries are
+	// removed from the loaded cache before the project runs, which is how a
+	// stale find_package result is made to search again.
+	Unset []string
+
+	// InitialCache holds the scripts named by -C, evaluated in order before the
+	// project is read. A script's set(... CACHE) calls therefore land before the
+	// project's own defaults, which is the entire point: it is how a CI job
+	// pre-answers questions the project is about to ask.
+	InitialCache []string
+
+	Env   []string
+	Jobs  int
+	Flags Flags
 
 	FS     FS
 	Runner run.Runner
@@ -90,33 +107,56 @@ type CMake struct {
 	tc  *toolchain.Toolchain
 }
 
+// New builds a CMake from a Config, applying a preset if one was named.
 func New(cfg Config) (*CMake, error) {
 	if cfg.Preset != "" {
-		// apply preset
-		pf, err := preset.Load(cfg.Source)
-		if err == nil && pf != nil {
-			if res, err := pf.Resolve(cfg.Preset); err == nil {
-				if cfg.Generator == "" {
-					cfg.Generator = res.Generator
-				}
-				if cfg.Binary == "" {
-					cfg.Binary = res.BinaryDir
-				}
-				if cfg.Toolchain == "" {
-					cfg.Toolchain = res.ToolchainFile
-				}
-				if cfg.Vars == nil {
-					cfg.Vars = make(map[string]string)
-				}
-				for k, v := range res.CacheVars {
-					if _, ok := cfg.Vars[k]; !ok {
-						cfg.Vars[k] = v
-					}
-				}
-			}
+		if err := applyPreset(&cfg); err != nil {
+			return nil, err
 		}
 	}
 	return &CMake{cfg: cfg}, nil
+}
+
+// applyPreset folds a named configure preset into the Config.
+//
+// Every field the preset sets loses to one the caller set explicitly, which is
+// what makes `cmake --preset release -DFOO=bar` mean what it looks like. A
+// failure here is returned rather than ignored: a mistyped preset name that
+// quietly configured with defaults would produce a build nobody asked for, and
+// the first sign of it would be a puzzling test failure much later.
+func applyPreset(cfg *Config) error {
+	pf, err := preset.Load(cfg.Source)
+	if err != nil {
+		return err
+	}
+	if pf == nil {
+		return fmt.Errorf("no presets file found in %s", cfg.Source)
+	}
+	res, err := pf.Resolve(cfg.Preset)
+	if err != nil {
+		return err
+	}
+	if cfg.Generator == "" {
+		cfg.Generator = res.Generator
+	}
+	if cfg.Binary == "" {
+		cfg.Binary = res.BinaryDir
+	}
+	if cfg.Toolchain == "" {
+		cfg.Toolchain = res.ToolchainFile
+	}
+	if cfg.Vars == nil {
+		cfg.Vars = make(map[string]string)
+	}
+	for k, v := range res.CacheVars {
+		if _, ok := cfg.Vars[k]; !ok {
+			cfg.Vars[k] = v
+		}
+	}
+	for k, v := range res.Environment {
+		cfg.Env = append(cfg.Env, k+"="+v)
+	}
+	return nil
 }
 
 // evalFS adapts the package's FS to the narrower one eval needs. The two
@@ -187,14 +227,27 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 			}
 		}
 	}
+	// A -D assignment wins over a remembered value, so it goes in first and
+	// the loaded cache fills in only what the command line did not mention.
 	for k, v := range c.cfg.Vars {
 		state.Cache.Set(k, v, eval.CacheString, "", true)
+	}
+	if err := c.loadCache(state, binary); err != nil {
+		return nil, err
+	}
+	for _, pattern := range c.cfg.Unset {
+		state.Cache.RemoveMatching(pattern)
 	}
 	if c.cfg.Generator != "" {
 		state.Cache.Set("CMAKE_GENERATOR", c.cfg.Generator, eval.CacheInternal, "", true)
 	}
 	if c.cfg.Toolchain != "" {
 		state.Cache.Set("CMAKE_TOOLCHAIN_FILE", c.cfg.Toolchain, eval.CacheFilepath, "", true)
+	}
+	for _, script := range c.cfg.InitialCache {
+		if err := eval.EvalCacheFile(ctx, state, evalFS{c.cfg.FS}, script); err != nil {
+			return nil, err
+		}
 	}
 
 	// CMake detects compilers inside project(); this package detects them
@@ -212,7 +265,45 @@ func (c *CMake) configure(ctx context.Context) (*eval.State, error) {
 	if err := eval.EvalProject(ctx, state, evalFS{c.cfg.FS}); err != nil {
 		return nil, err
 	}
+	if err := c.saveCache(state, binary); err != nil {
+		return nil, err
+	}
 	return state, nil
+}
+
+// cacheFileName is where a build directory remembers what it was configured
+// with. The name is CMake's, so that a person who knows where to look finds it
+// where they expect.
+const cacheFileName = "CMakeCache.txt"
+
+// loadCache merges a previous run's cache into this one.
+func (c *CMake) loadCache(state *eval.State, binary string) error {
+	if c.cfg.Flags.Fresh {
+		// --fresh means the build directory forgets. Removing the file rather
+		// than skipping the read matters: a later run must not find it either.
+		_ = c.cfg.FS.Remove(binary + "/" + cacheFileName)
+		return nil
+	}
+	data, err := c.cfg.FS.ReadFile(binary + "/" + cacheFileName)
+	if err != nil {
+		return nil // no previous configure; nothing to remember
+	}
+	previous, err := eval.ReadCache(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", cacheFileName, err)
+	}
+	state.Cache.Merge(previous)
+	return nil
+}
+
+// saveCache writes what this configure decided, so the next one can start from
+// it.
+func (c *CMake) saveCache(state *eval.State, binary string) error {
+	var buf bytes.Buffer
+	if err := eval.WriteCache(&buf, state.Cache, binary); err != nil {
+		return err
+	}
+	return c.cfg.FS.WriteFile(binary+"/"+cacheFileName, buf.Bytes(), 0644)
 }
 
 // Generate runs the generate phase: it resolves each target's transitive build

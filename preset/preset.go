@@ -9,6 +9,7 @@
 package preset
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -156,6 +157,39 @@ type GeneratorConfig struct {
 type CacheVar struct {
 	Type  string      `json:"type,omitempty"`
 	Value interface{} `json:"value"` // string or bool
+}
+
+// UnmarshalJSON accepts both shapes the schema allows for a cache variable.
+//
+// The long form is an object, {"type": "STRING", "value": "x"}. The short form
+// is the bare value, "x", and it is what almost every preset file in the wild
+// actually contains -- a reader that handles only the object form rejects them
+// all, and rejects them at the first one, so the file appears not to exist.
+func (c *CacheVar) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		// Aliased so that this does not recurse into itself.
+		type cacheVarObject CacheVar
+		var obj cacheVarObject
+		if err := json.Unmarshal(data, &obj); err != nil {
+			return err
+		}
+		*c = CacheVar(obj)
+		return nil
+	}
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	c.Value = v
+	// A bare true or false is a BOOL; anything else is a STRING. Recording that
+	// here means the rest of the package never has to ask which form it came in.
+	if _, isBool := v.(bool); isBool {
+		c.Type = "BOOL"
+	} else {
+		c.Type = "STRING"
+	}
+	return nil
 }
 
 // StringOrList is a JSON field that can be either a string or []string.
@@ -468,17 +502,122 @@ func goosToHostSystem() string {
 	}
 }
 
-// ConfigurePresetNames returns all non-hidden configure preset names.
-func (pf *PresetFile) ConfigurePresetNames() []string {
-	seen := make(map[string]bool)
-	var names []string
+// Listing is one preset as `cmake --list-presets` reports it.
+type Listing struct {
+	Name        string
+	DisplayName string
+}
+
+// List returns the presets of one kind that a user may select, in the order the
+// files declare them.
+//
+// Hidden presets are omitted. A hidden preset exists to be inherited from and
+// has no meaning on a command line, so listing one would be offering a choice
+// that does not work.
+func (pf *PresetFile) List(kind Kind) []Listing {
+	var out []Listing
+	seen := map[string]bool{}
+	add := func(name, display string, hidden bool) {
+		if hidden || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, Listing{Name: name, DisplayName: display})
+	}
 	for _, f := range pf.files {
-		for _, p := range f.ConfigurePresets {
-			if !p.Hidden && !seen[p.Name] {
-				seen[p.Name] = true
-				names = append(names, p.Name)
+		switch kind {
+		case Configure:
+			for _, p := range f.ConfigurePresets {
+				add(p.Name, p.DisplayName, p.Hidden)
+			}
+		case Build:
+			for _, p := range f.BuildPresets {
+				add(p.Name, p.DisplayName, p.Hidden)
+			}
+		case Test:
+			for _, p := range f.TestPresets {
+				add(p.Name, p.DisplayName, p.Hidden)
+			}
+		case Package:
+			for _, p := range f.PackagePresets {
+				add(p.Name, p.DisplayName, p.Hidden)
 			}
 		}
 	}
-	return names
+	return out
+}
+
+// ParseKind maps the name --list-presets uses to a [Kind].
+func ParseKind(s string) (Kind, bool) {
+	switch s {
+	case "", "configure":
+		return Configure, true
+	case "build":
+		return Build, true
+	case "test":
+		return Test, true
+	case "package":
+		return Package, true
+	}
+	return Configure, false
+}
+
+// ResolvedBuild is a build preset reduced to what `cmake --build` needs.
+type ResolvedBuild struct {
+	Name       string
+	BinaryDir  string
+	Targets    []string
+	Config     string
+	Jobs       int
+	Verbose    bool
+	CleanFirst bool
+}
+
+// ResolveBuild resolves a named build preset.
+//
+// A build preset carries almost nothing itself: its job is to name the
+// configure preset whose binary directory it builds. Resolving one therefore
+// means resolving that configure preset too, which is why this cannot be a
+// field lookup.
+func (pf *PresetFile) ResolveBuild(name string) (*ResolvedBuild, error) {
+	index := map[string]*BuildPreset{}
+	for _, f := range pf.files {
+		for i := range f.BuildPresets {
+			p := &f.BuildPresets[i]
+			index[p.Name] = p
+		}
+	}
+	p, ok := index[name]
+	if !ok {
+		return nil, fmt.Errorf("preset: no such build preset %q", name)
+	}
+	if p.Hidden {
+		return nil, fmt.Errorf("preset: build preset %q is hidden and cannot be used directly", name)
+	}
+
+	out := &ResolvedBuild{
+		Name:    p.Name,
+		Targets: p.Targets,
+		Config:  p.Configuration,
+	}
+	// These three are pointers in the schema so that "absent" and "false" stay
+	// distinguishable; the command line has already decided what absent means.
+	if p.Jobs != nil {
+		out.Jobs = *p.Jobs
+	}
+	if p.Verbose != nil {
+		out.Verbose = *p.Verbose
+	}
+	if p.CleanFirst != nil {
+		out.CleanFirst = *p.CleanFirst
+	}
+	if p.ConfigurePreset == "" {
+		return nil, fmt.Errorf("preset: build preset %q names no configurePreset", name)
+	}
+	cfg, err := pf.Resolve(p.ConfigurePreset)
+	if err != nil {
+		return nil, err
+	}
+	out.BinaryDir = cfg.BinaryDir
+	return out, nil
 }
