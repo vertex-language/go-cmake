@@ -402,6 +402,14 @@ func (c *CMake) generateFrom(ctx context.Context, state *eval.State) (*GenerateR
 		}
 	}
 
+	// An IDE left a question in the build tree before this run; answering it is
+	// what lets the editor know which target a file belongs to. The reply is
+	// written only when something asked, because a reply nobody requested
+	// leaves a stale index that the next client would read as current.
+	if err := c.writeFileAPI(state, graph); err != nil {
+		return nil, err
+	}
+
 	// The tests go out per directory, so that running the tests from a
 	// subdirectory of the build tree runs that subtree's and nothing else.
 	tests := &generate.CTest{
@@ -562,4 +570,53 @@ func (c *CMake) Install(ctx context.Context, opts InstallOptions) error {
 		return fmt.Errorf("install failed")
 	}
 	return nil
+}
+
+// writeFileAPI answers whatever a client left in the query directory.
+func (c *CMake) writeFileAPI(state *eval.State, graph *generate.Graph) error {
+	queries, err := generate.ParseQueries(
+		c.cfg.FS.Glob,
+		c.cfg.FS.ReadFile,
+		state.BinaryDir,
+	)
+	if err != nil || queries == nil {
+		return err
+	}
+
+	api := &generate.FileAPI{
+		Graph:        graph,
+		Toolchain:    c.toolchain(state),
+		SourceDir:    state.SourceDir,
+		BinaryDir:    state.BinaryDir,
+		Generator:    c.generatorName(),
+		CMakeCommand: state.GetVar("CMAKE_COMMAND"),
+		Version:      state.GetVar("CMAKE_VERSION"),
+	}
+	files, err := api.Reply(queries)
+	if err != nil {
+		return err
+	}
+
+	// The reply directory is replaced rather than added to: an index from a
+	// previous configure names object files this one did not write, and a
+	// client reading the newest index would follow those names to stale data.
+	replyDir := state.BinaryDir + "/" + generate.ReplyDir()
+	_ = c.cfg.FS.Remove(replyDir)
+	if err := c.cfg.FS.MkdirAll(replyDir, 0755); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := c.cfg.FS.WriteFile(state.BinaryDir+"/"+f.Path, f.Content, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// generatorName is what this build tree reports itself as generating.
+func (c *CMake) generatorName() string {
+	if c.cfg.Generator != "" {
+		return c.cfg.Generator
+	}
+	return "Ninja"
 }

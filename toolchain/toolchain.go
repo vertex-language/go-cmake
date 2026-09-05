@@ -375,3 +375,27 @@ func LanguageOf(path string) string {
 		return ""
 	}
 }
+
+// ExtensionsFor is the inverse of [LanguageOf]: the file extensions that map to
+// a language. The File API reports it so that an editor can decide which
+// compiler a new file will use before the file has been added to any target.
+func ExtensionsFor(language string) []string {
+	switch language {
+	case "C":
+		return []string{"c"}
+	case "CXX":
+		return []string{"cc", "cpp", "cxx", "c++", "cp", "cppm", "ixx"}
+	case "OBJC":
+		return []string{"m"}
+	case "OBJCXX":
+		return []string{"mm"}
+	case "ASM":
+		return []string{"s", "asm"}
+	case "Fortran":
+		return []string{"f", "f90", "f95", "f03"}
+	case "CUDA":
+		return []string{"cu"}
+	default:
+		return nil
+	}
+}

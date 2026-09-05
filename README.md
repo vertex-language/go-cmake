@@ -373,7 +373,8 @@ one that says it cannot.
    drive a dashboard submission rather than a test run.
 4. **18 of 132 documented commands**, of which 13 are `ctest_*` -- they drive a
    dashboard submission rather than a build -- and the rest are CMake 4.x
-   additions: `cmake_file_api`, `cmake_pkg_config`, `cmake_instrumentation`,
+   additions: `cmake_file_api` (the command; the File API itself is
+   implemented), `cmake_pkg_config`, `cmake_instrumentation`,
    `cmake_diagnostic`, `discover_tests`.
 5. **Multi-config generators.** One configuration per build directory.
 6. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
