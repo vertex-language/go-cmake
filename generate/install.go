@@ -197,7 +197,7 @@ func (in *Install) absolute(sourceDir, item string) string {
 
 // targetOutput is where the build put a target's file.
 func (in *Install) targetOutput(t *eval.TargetState) string {
-	return targetOutputPath(t, in.Toolchain, in.SourceDir, in.BinaryDir)
+	return targetOutputPath(in.Graph.State, t, in.Toolchain, in.SourceDir, in.BinaryDir)
 }
 
 // installTypeFor is the TYPE keyword file(INSTALL) wants, which decides the
@@ -292,8 +292,7 @@ func (in *Install) artifactsOf(t *eval.TargetState) []artifact {
 		return []artifact{{built, "RUNTIME", "EXECUTABLE"}}
 	case "SHARED", "MODULE":
 		out := []artifact{{built, "RUNTIME", "SHARED_LIBRARY"}}
-		if in.Toolchain != nil && in.Toolchain.ImportSuffix != "" {
-			implib := strings.TrimSuffix(built, in.Toolchain.SharedSuffix) + in.Toolchain.ImportSuffix
+		if implib := targetImportPath(in.Graph.State, t, in.Toolchain, in.SourceDir, in.BinaryDir); implib != "" {
 			out = append(out, artifact{implib, "ARCHIVE", "STATIC_LIBRARY"})
 		} else {
 			// Everywhere else the one file is both what is linked and what is

@@ -142,7 +142,7 @@ func (c *CTest) resolveCommand(argv []string) []string {
 	out := append([]string{}, argv...)
 	for i, a := range out {
 		if r, ok := c.Graph.Targets[a]; ok && r.Target.Type == "EXECUTABLE" {
-			out[i] = targetOutputPath(r.Target, c.Toolchain, c.SourceDir, c.BinaryDir)
+			out[i] = targetOutputPath(c.Graph.State, r.Target, c.Toolchain, c.SourceDir, c.BinaryDir)
 		}
 	}
 	return out

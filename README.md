@@ -395,7 +395,8 @@ one that says it cannot.
    `cmake_diagnostic`, `discover_tests`.
 5. **Multi-config generators.** One configuration per build directory.
 6. **Precompiled headers, unity builds, LTO, and module (C++20) dependency
-   scanning.**
+   scanning.** `target_precompile_headers()` is accepted and ignored: a build
+   without a precompiled header is slower, not wrong.
 7. **The regex engine's own chatter.** When a pattern will not compile, CMake
    writes two lines from its vendored C++ matcher — `RegularExpression::compile():
    Nested *?+.` and `Error in compile.` — before the command reports the failure.

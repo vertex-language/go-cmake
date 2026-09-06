@@ -149,3 +149,115 @@ func TestCompileCommandsCarryTheSameFlags(t *testing.T) {
 		t.Errorf("the compile command an editor reads has no NDEBUG, but the build does:\n%s", text)
 	}
 }
+
+// TestLanguageStandardReachesTheCompiler covers CXX_STANDARD and the compile
+// feature that raises it. A project asking for C++17 and getting C++14 does not
+// fail quietly -- it fails at the first structured binding -- but it fails for
+// a reason that looks like the compiler's fault rather than the build's.
+func TestLanguageStandardReachesTheCompiler(t *testing.T) {
+	// __cplusplus is the compiler's own answer to what standard it is using,
+	// which is the only witness that cannot be faked by the build.
+	const reportStandard = `
+#include <stdio.h>
+#ifdef _MSVC_LANG
+#define STANDARD _MSVC_LANG
+#else
+#define STANDARD __cplusplus
+#endif
+int main(void) { printf("standard=%ld\n", (long)STANDARD); return 0; }
+`
+	run := func(lists string) string {
+		dir := t.TempDir()
+		write(t, dir, "CMakeLists.txt", lists)
+		write(t, dir, "main.cpp", reportStandard)
+		write(t, dir, "dep.cpp", "int dep(){ return 0; }\n")
+		build := filepath.Join(dir, "b")
+		if code, out, errOut := runCLI(t, dir, "-S", dir, "-B", build); code != 0 {
+			t.Fatalf("configure failed:\n%s%s", out, errOut)
+		}
+		if code, out, errOut := runCLI(t, dir, "--build", build); code != 0 {
+			t.Fatalf("build failed:\n%s%s", out, errOut)
+		}
+		return runProgram(t, filepath.Join(build, "app"+exeSuffix()))
+	}
+
+	// MSVC answers __cplusplus with 199711 whatever it was told, so the program
+	// asks _MSVC_LANG instead where it exists. Either way the test compares two
+	// builds rather than naming a number, because what a compiler reports for a
+	// standard it is not this test's business.
+	base := run(`
+cmake_minimum_required(VERSION 3.16)
+project(P LANGUAGES CXX)
+add_executable(app main.cpp)
+`)
+	viaProperty := run(`
+cmake_minimum_required(VERSION 3.16)
+project(P LANGUAGES CXX)
+add_executable(app main.cpp)
+set_target_properties(app PROPERTIES CXX_STANDARD 20)
+`)
+	viaVariable := run(`
+cmake_minimum_required(VERSION 3.16)
+project(P LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+add_executable(app main.cpp)
+`)
+	// A library that needs C++20 in its headers says so PUBLIC, and everything
+	// that links it has to be compiled that way too.
+	viaFeature := run(`
+cmake_minimum_required(VERSION 3.16)
+project(P LANGUAGES CXX)
+add_library(dep STATIC dep.cpp)
+target_compile_features(dep PUBLIC cxx_std_20)
+add_executable(app main.cpp)
+target_link_libraries(app PRIVATE dep)
+`)
+
+	for name, got := range map[string]string{
+		"CXX_STANDARD property":   viaProperty,
+		"CMAKE_CXX_STANDARD":      viaVariable,
+		"an inherited cxx_std_20": viaFeature,
+	} {
+		if got == base {
+			t.Errorf("%s did not change what the compiler was told; both runs printed %q", name, strings.TrimSpace(got))
+		}
+	}
+}
+
+// TestOutputDirectoriesArePlaced covers the properties a project sets so its own
+// scripts can find what it built. A build that ignores them leaves whoever
+// looks there staring at an empty directory.
+func TestOutputDirectoriesArePlaced(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "CMakeLists.txt", `
+cmake_minimum_required(VERSION 3.16)
+project(P LANGUAGES C)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage/lib)
+add_library(core STATIC core.c)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE core)
+`)
+	write(t, dir, "core.c", "int core(void){return 7;}\n")
+	write(t, dir, "main.c", "#include <stdio.h>\nint core(void);\nint main(void){printf(\"core=%d\\n\", core());return 0;}\n")
+	build := filepath.Join(dir, "b")
+	if code, out, errOut := runCLI(t, dir, "-S", dir, "-B", build); code != 0 {
+		t.Fatalf("configure failed:\n%s%s", out, errOut)
+	}
+	if code, out, errOut := runCLI(t, dir, "--build", build); code != 0 {
+		t.Fatalf("build failed:\n%s%s", out, errOut)
+	}
+	program := filepath.Join(build, "stage", "bin", "app"+exeSuffix())
+	if _, err := os.Stat(program); err != nil {
+		t.Fatalf("the program is not in the runtime output directory: %v", err)
+	}
+	// The library has to be where it was sent too, and the link still has to
+	// have found it: a program that runs proves the second.
+	if got := runProgram(t, program); !strings.Contains(got, "core=7") {
+		t.Errorf("the program printed %q", got)
+	}
+	matches, _ := filepath.Glob(filepath.Join(build, "stage", "lib", "*"))
+	if len(matches) == 0 {
+		t.Error("the archive output directory is empty")
+	}
+}

@@ -347,11 +347,8 @@ func (e *Export) artifactPaths(t *eval.TargetState, opts exportOptions) (locatio
 		p := opts.Destinations[t.Name]
 		return p.Location, p.Implib
 	}
-	built := targetOutputPath(t, e.Toolchain, e.SourceDir, e.BinaryDir)
-	if t.Type == "SHARED" && e.Toolchain != nil && e.Toolchain.ImportSuffix != "" {
-		return built, strings.TrimSuffix(built, e.Toolchain.SharedSuffix) + e.Toolchain.ImportSuffix
-	}
-	return built, ""
+	built := targetOutputPath(e.Graph.State, t, e.Toolchain, e.SourceDir, e.BinaryDir)
+	return built, targetImportPath(e.Graph.State, t, e.Toolchain, e.SourceDir, e.BinaryDir)
 }
 
 // underPrefix makes one directory relative to the computed install prefix.

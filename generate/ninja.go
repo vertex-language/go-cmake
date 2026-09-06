@@ -5,6 +5,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/vertex-language/go-cmake/eval"
@@ -245,8 +246,13 @@ func (n *Ninja) writeTarget(b *ninjaWriter, name string) ([]string, error) {
 		implicit = append(implicit, n.targetOutput(d))
 	}
 
+	var alsoOutputs []string
+	if implib := targetImportPath(n.Graph.State, t, n.Toolchain, n.SourceDir, n.BinaryDir); implib != "" {
+		alsoOutputs = append(alsoOutputs, implib)
+	}
+
 	b.comment("target " + t.Name)
-	b.buildEdge(output, rule, inputs, implicit, extra)
+	b.buildEdgeWith(output, alsoOutputs, rule, inputs, implicit, extra)
 	// A named phony edge lets `ninja <target>` work the way `make <target>` does.
 	b.line("build " + escape(t.Name) + ": phony " + escape(output))
 	b.blank()
@@ -344,7 +350,7 @@ func (n *Ninja) objectPath(t *eval.TargetState, source string) string {
 
 // targetOutput is the file a target produces.
 func (n *Ninja) targetOutput(t *eval.TargetState) string {
-	return targetOutputPath(t, n.Toolchain, n.SourceDir, n.BinaryDir)
+	return targetOutputPath(n.Graph.State, t, n.Toolchain, n.SourceDir, n.BinaryDir)
 }
 
 // targetOutputPath is where the build writes a target's file.
@@ -352,20 +358,82 @@ func (n *Ninja) targetOutput(t *eval.TargetState) string {
 // It is shared rather than duplicated because the install script has to name
 // the same path: a copy of this logic that drifted by one prefix would produce
 // an install that silently copies nothing, and the build would still pass.
-func targetOutputPath(t *eval.TargetState, tc *toolchain.Toolchain, sourceDir, binaryDir string) string {
-	dir := path.Join(binaryDir, relativeTo(sourceDir, t.SourceDir))
-	name := t.Name
-	if v, ok := t.Properties["OUTPUT_NAME"]; ok && v != "" {
-		name = v
-	}
+func targetOutputPath(state *eval.State, t *eval.TargetState, tc *toolchain.Toolchain, sourceDir, binaryDir string) string {
+	name := outputName(t)
 	switch t.Type {
 	case "EXECUTABLE":
-		return path.Join(dir, name+tc.ExeSuffix)
+		return path.Join(outputDir(state, t, "RUNTIME", sourceDir, binaryDir), name+suffixOf(t, tc.ExeSuffix))
 	case "SHARED", "MODULE":
-		return path.Join(dir, tc.SharedPrefix+name+tc.SharedSuffix)
+		kind := "LIBRARY"
+		if tc.ImportSuffix != "" {
+			// Where a shared library comes in two pieces, the loadable one is
+			// a runtime artifact and only the stub is a library.
+			kind = "RUNTIME"
+		}
+		return path.Join(outputDir(state, t, kind, sourceDir, binaryDir),
+			prefixOf(t, tc.SharedPrefix)+name+suffixOf(t, tc.SharedSuffix))
 	default:
-		return path.Join(dir, tc.StaticPrefix+name+tc.StaticSuffix)
+		return path.Join(outputDir(state, t, "ARCHIVE", sourceDir, binaryDir),
+			prefixOf(t, tc.StaticPrefix)+name+suffixOf(t, tc.StaticSuffix))
 	}
+}
+
+// targetImportPath is the link-time stub beside a Windows shared library. It
+// is placed separately because it is an archive artifact: a project that sends
+// its programs to bin and its libraries to lib expects the .dll in one and the
+// .lib in the other.
+func targetImportPath(state *eval.State, t *eval.TargetState, tc *toolchain.Toolchain, sourceDir, binaryDir string) string {
+	if tc.ImportSuffix == "" || (t.Type != "SHARED" && t.Type != "MODULE") {
+		return ""
+	}
+	return path.Join(outputDir(state, t, "ARCHIVE", sourceDir, binaryDir),
+		prefixOf(t, tc.StaticPrefix)+outputName(t)+tc.ImportSuffix)
+}
+
+// outputDir answers where one kind of artifact goes.
+//
+// A project that sets CMAKE_RUNTIME_OUTPUT_DIRECTORY has usually done it so
+// that its own scripts, its tests, or a DLL search path can find the programs
+// without knowing how the source tree is laid out. Ignoring it leaves those
+// looking in a directory that stays empty.
+func outputDir(state *eval.State, t *eval.TargetState, kind, sourceDir, binaryDir string) string {
+	def := path.Join(binaryDir, relativeTo(sourceDir, t.SourceDir))
+	dir := t.Properties[kind+"_OUTPUT_DIRECTORY"]
+	if dir == "" && state != nil {
+		dir = state.GetVar("CMAKE_" + kind + "_OUTPUT_DIRECTORY")
+	}
+	if dir == "" {
+		return def
+	}
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	if path.IsAbs(dir) || (len(dir) > 1 && dir[1] == ':') {
+		return path.Clean(dir)
+	}
+	return path.Join(def, dir)
+}
+
+// outputName, prefixOf and suffixOf apply the properties that rename a target's
+// file. A project renames one when the target name it wants in CMake is not the
+// file name it wants on disk -- a library called "core" shipping as libfoo.so.
+func outputName(t *eval.TargetState) string {
+	if v := t.Properties["OUTPUT_NAME"]; v != "" {
+		return v
+	}
+	return t.Name
+}
+
+func prefixOf(t *eval.TargetState, def string) string {
+	if v, ok := t.Properties["PREFIX"]; ok {
+		return v
+	}
+	return def
+}
+
+func suffixOf(t *eval.TargetState, def string) string {
+	if v, ok := t.Properties["SUFFIX"]; ok {
+		return v
+	}
+	return def
 }
 
 // linkRuleFor chooses the link rule and its per-target variables.
@@ -378,7 +446,18 @@ func (n *Ninja) linkRuleFor(r *Resolved) (string, map[string]string) {
 	case "SHARED", "MODULE":
 		vars["LINK_PATH"] = n.linkPathFlags(r.LinkDirs)
 		vars["LINK_LIBS"] = n.linkLibFlags(r)
-		vars["LINK_FLAGS"] = strings.Join(append(n.linkerFlags(t), r.LinkOpts...), " ")
+		flags := append(n.linkerFlags(t), r.LinkOpts...)
+		// The import library is placed rather than left to land beside the
+		// DLL, because a project that sends its programs to bin and its
+		// libraries to lib means both halves of that.
+		if implib := targetImportPath(n.Graph.State, t, n.Toolchain, n.SourceDir, n.BinaryDir); implib != "" {
+			if n.Toolchain.Kind() == toolchain.MSVC {
+				flags = append(flags, "/IMPLIB:"+quoteArg(implib))
+			} else {
+				flags = append(flags, "-Wl,--out-implib,"+implib)
+			}
+		}
+		vars["LINK_FLAGS"] = strings.Join(flags, " ")
 		return "link_shared", vars
 	default:
 		vars["LINK_PATH"] = n.linkPathFlags(r.LinkDirs)
@@ -474,11 +553,10 @@ func (n *Ninja) linkLibFlags(r *Resolved) string {
 // linkFileFor is the file a consumer links against, which on Windows is the
 // import library rather than the DLL itself.
 func (n *Ninja) linkFileFor(t *eval.TargetState) string {
-	out := n.targetOutput(t)
-	if (t.Type == "SHARED" || t.Type == "MODULE") && n.Toolchain.ImportSuffix != "" {
-		return strings.TrimSuffix(out, n.Toolchain.SharedSuffix) + n.Toolchain.ImportSuffix
+	if implib := targetImportPath(n.Graph.State, t, n.Toolchain, n.SourceDir, n.BinaryDir); implib != "" {
+		return implib
 	}
-	return out
+	return n.targetOutput(t)
 }
 
 // writeCustomCommands emits the add_custom_command(OUTPUT ...) rules.
@@ -541,7 +619,20 @@ func (b *ninjaWriter) rule(name string, vars map[string]string) {
 
 // buildEdge writes one build statement.
 func (b *ninjaWriter) buildEdge(output, rule string, inputs, implicit []string, vars map[string]string) {
-	line := "build " + escape(output) + ": " + rule
+	b.buildEdgeWith(output, nil, rule, inputs, implicit, vars)
+}
+
+// buildEdgeWith is the same with implicit outputs: files an edge produces that
+// its command line does not name. A Windows shared library is the case that
+// needs them -- the linker writes an import library beside the DLL, and a build
+// tool that does not know about it will not create its directory and will not
+// notice when it goes missing.
+func (b *ninjaWriter) buildEdgeWith(output string, alsoOutputs []string, rule string, inputs, implicit []string, vars map[string]string) {
+	line := "build " + escape(output)
+	if len(alsoOutputs) > 0 {
+		line += " | " + strings.Join(escapeAll(alsoOutputs), " ")
+	}
+	line += ": " + rule
 	if len(inputs) > 0 {
 		line += " " + strings.Join(escapeAll(inputs), " ")
 	}
@@ -651,10 +742,108 @@ func (n *Ninja) compileFlags(r *Resolved, lang string) string {
 	if config := state.GetVar("CMAKE_BUILD_TYPE"); config != "" {
 		add(state.GetVar("CMAKE_" + lang + "_FLAGS_" + strings.ToUpper(config)))
 	}
+	if flag := n.standardFlag(r, lang); flag != "" {
+		add(flag)
+	}
+	if flag := n.picFlag(r); flag != "" {
+		add(flag)
+	}
 	out = append(out, n.msvcAbstractionFlags(r, lang)...)
 	out = append(out, r.CompileOpts...)
 	return strings.Join(out, " ")
 }
+
+// standardFlag renders the language standard the target asked for.
+//
+// Three things can ask, and the highest wins: the <LANG>_STANDARD property, the
+// CMAKE_<LANG>_STANDARD variable that initialises it, and a cxx_std_NN or
+// c_std_NN compile feature -- including one inherited from a library, which is
+// how a header-only dependency says "you have to compile as C++17 to use me".
+func (n *Ninja) standardFlag(r *Resolved, lang string) string {
+	state := n.Graph.State
+	best := 0
+	consider := func(v string) {
+		if year, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && year > best {
+			best = year
+		}
+	}
+	consider(state.GetVar("CMAKE_" + lang + "_STANDARD"))
+	consider(r.Target.Properties[lang+"_STANDARD"])
+	prefix := strings.ToLower(lang) + "_std_"
+	if lang == "CXX" {
+		prefix = "cxx_std_"
+	}
+	for _, feat := range r.CompileFeats {
+		if strings.HasPrefix(feat, prefix) {
+			consider(strings.TrimPrefix(feat, prefix))
+		}
+	}
+	if best == 0 {
+		return ""
+	}
+	standard := strconv.Itoa(best)
+
+	if n.Toolchain != nil && n.Toolchain.Kind() == toolchain.MSVC {
+		if lang == "CXX" {
+			// MSVC spells the newest one "latest" rather than by year, and has
+			// no option at all for the versions before 14.
+			switch standard {
+			case "98", "11":
+				return ""
+			case "23", "26":
+				return "/std:c++latest"
+			}
+			return "/std:c++" + standard
+		}
+		return "/std:c" + standard
+	}
+
+	// Extensions are on by default, which is why CMake's flag is usually
+	// -std=gnu++17 rather than -std=c++17: turning them off is a choice a
+	// project makes, not the starting point.
+	dialect := "gnu"
+	if isOff(r.Target.Properties[lang+"_EXTENSIONS"]) ||
+		(r.Target.Properties[lang+"_EXTENSIONS"] == "" && isOff(state.GetVar("CMAKE_"+lang+"_EXTENSIONS"))) {
+		dialect = "c"
+	}
+	if lang == "CXX" {
+		return "-std=" + dialect + "++" + standard
+	}
+	return "-std=" + dialect + standard
+}
+
+// picFlag renders position-independent code, which is not a preference on the
+// platforms that need it: a shared library whose objects were compiled without
+// it does not link at all.
+func (n *Ninja) picFlag(r *Resolved) string {
+	if n.Toolchain != nil && n.Toolchain.Kind() == toolchain.MSVC {
+		return "" // Windows code is position-independent by construction
+	}
+	switch r.Target.Type {
+	case "SHARED", "MODULE":
+		return "-fPIC"
+	}
+	want := r.Target.Properties["POSITION_INDEPENDENT_CODE"]
+	if want == "" {
+		want = n.Graph.State.GetVar("CMAKE_POSITION_INDEPENDENT_CODE")
+	}
+	if isTruthy(want) {
+		return "-fPIC"
+	}
+	return ""
+}
+
+// isOff and isTruthy read a CMake boolean the way the language does, without
+// the whole condition evaluator: these are property values, not expressions.
+func isOff(v string) bool {
+	switch strings.ToUpper(strings.TrimSpace(v)) {
+	case "OFF", "NO", "FALSE", "N", "0", "IGNORE", "NOTFOUND", "":
+		return true
+	}
+	return strings.HasSuffix(strings.ToUpper(v), "-NOTFOUND")
+}
+
+func isTruthy(v string) bool { return v != "" && !isOff(v) }
 
 // msvcAbstractionFlags renders the options CMake expresses as settings rather
 // than as flags: which C runtime to link against, and what debug information to

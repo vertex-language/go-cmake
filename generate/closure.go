@@ -23,6 +23,11 @@ type Resolved struct {
 	IncludeDirs []string
 	Defines     []string
 	CompileOpts []string
+	// CompileFeats is what target_compile_features asked for, the target's own
+	// and everything inherited. A feature travels the same way a definition
+	// does: a library that needs C++17 in its headers says so PUBLIC, and every
+	// consumer has to be compiled that way too or the headers do not parse.
+	CompileFeats []string
 
 	// Link settings: LinkLibs is in link order, dependencies after dependents,
 	// which is what a single-pass linker requires.
@@ -157,6 +162,7 @@ func (g *Graph) resolveTarget(name string) (*Resolved, error) {
 	r.IncludeDirs = append(r.IncludeDirs, t.IncludeDirs...)
 	r.Defines = append(r.Defines, t.Defines...)
 	r.CompileOpts = append(r.CompileOpts, t.CompileOpts...)
+	r.CompileFeats = append(r.CompileFeats, t.CompileFeats...)
 	r.LinkOpts = append(r.LinkOpts, t.LinkOpts...)
 	r.LinkDirs = append(r.LinkDirs, t.LinkDirs...)
 
@@ -195,6 +201,7 @@ func (g *Graph) resolveTarget(name string) (*Resolved, error) {
 			r.IncludeDirs = appendNew(r.IncludeDirs, depTarget.IfaceIncludeDirs...)
 			r.Defines = appendNew(r.Defines, depTarget.IfaceDefines...)
 			r.CompileOpts = appendNew(r.CompileOpts, depTarget.IfaceCompileOpts...)
+			r.CompileFeats = appendNew(r.CompileFeats, depTarget.IfaceCompileFeats...)
 			r.LinkOpts = appendNew(r.LinkOpts, depTarget.IfaceLinkOpts...)
 			r.LinkDirs = appendNew(r.LinkDirs, depTarget.IfaceLinkDirs...)
 
